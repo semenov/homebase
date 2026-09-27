@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/vsemenov/ship/internal/proto"
+import "github.com/semenov/ship/internal/proto"
 
 const (
 	proxyCaddy = "caddy"

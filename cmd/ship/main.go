@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/vsemenov/ship/internal/cli"
+	"github.com/semenov/ship/internal/cli"
 )
 
 func main() {

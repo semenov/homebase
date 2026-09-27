@@ -1,5 +1,6 @@
 AGENT_FLAGS = CGO_ENABLED=0 GOOS=linux
-LDFLAGS = -s -w
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS = -s -w -X github.com/semenov/ship/internal/cli.Version=$(VERSION)
 BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: build agent install test clean

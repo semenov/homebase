@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/vsemenov/ship/internal/proto"
+	"github.com/semenov/ship/internal/proto"
 )
 
 type serverConfig struct {

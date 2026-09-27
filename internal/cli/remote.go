@@ -14,8 +14,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/vsemenov/ship/internal/agentbin"
-	"github.com/vsemenov/ship/internal/proto"
+	"github.com/semenov/ship/internal/agentbin"
+	"github.com/semenov/ship/internal/proto"
 )
 
 const agentPath = "/usr/local/bin/shipd"

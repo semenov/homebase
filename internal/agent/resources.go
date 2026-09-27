@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vsemenov/ship/internal/proto"
+	"github.com/semenov/ship/internal/proto"
 )
 
 var (

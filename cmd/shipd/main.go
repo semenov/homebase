@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/vsemenov/ship/internal/agent"
+	"github.com/semenov/ship/internal/agent"
 )
 
 func main() {

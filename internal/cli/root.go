@@ -16,12 +16,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/vsemenov/ship/internal/detect"
-	"github.com/vsemenov/ship/internal/proto"
+	"github.com/semenov/ship/internal/detect"
+	"github.com/semenov/ship/internal/proto"
 )
 
 //go:embed agents.md
 var agentDocs string
+
+// Version is set at build time (make sets it from git tags).
+var Version = "dev"
 
 var (
 	flagApp    string
@@ -51,6 +54,7 @@ AI agents: run ` + "`ship docs`" + ` first; it explains everything and summarize
 The app gets https://<name>.<ip>.sslip.io by default, or your --domain.
 Every command accepts --json for machine-readable output. Run ` + "`ship docs`" + ` for the full guide.`,
 		Args:          cobra.MaximumNArgs(1),
+		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

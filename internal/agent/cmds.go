@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vsemenov/ship/internal/proto"
+	"github.com/semenov/ship/internal/proto"
 )
 
 func cmdBuild(args []string) (any, error) {

@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/vsemenov/ship/internal/proto"
+	"github.com/semenov/ship/internal/proto"
 )
 
 //go:embed skill.md

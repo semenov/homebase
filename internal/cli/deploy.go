@@ -16,8 +16,8 @@ import (
 	"github.com/moby/patternmatcher"
 	"github.com/moby/patternmatcher/ignorefile"
 
-	"github.com/vsemenov/ship/internal/detect"
-	"github.com/vsemenov/ship/internal/proto"
+	"github.com/semenov/ship/internal/detect"
+	"github.com/semenov/ship/internal/proto"
 )
 
 type deployOpts struct {
