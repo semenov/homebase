@@ -20,6 +20,8 @@ const (
 	CodeContainer      = "container_failed"
 	CodeHealth         = "health_check_failed"
 	CodeProxy          = "proxy_config_failed"
+	CodeRelease        = "release_command_failed"
+	CodeDatabase       = "database_failed"
 	CodeNotFound       = "app_not_found"
 	CodeNoPrevious     = "no_previous_release"
 	CodeLocked         = "deploy_in_progress"
@@ -49,7 +51,7 @@ func ExitCode(code string) int {
 		return 3
 	case CodeBuild, CodeUpload:
 		return 4
-	case CodeContainer, CodeHealth, CodeProxy, CodeLocked:
+	case CodeContainer, CodeHealth, CodeProxy, CodeLocked, CodeRelease, CodeDatabase:
 		return 5
 	case CodeSSH:
 		return 6
@@ -80,17 +82,35 @@ type App struct {
 	URL        string    `json:"url"`
 	TLS        bool      `json:"tls"`
 	HealthPath string    `json:"health_path"`
+	Volumes    []string  `json:"volumes,omitempty"` // container paths backed by persistent volumes
 	Current    *Release  `json:"current,omitempty"`
 	Previous   *Release  `json:"previous,omitempty"`
 	CertByShip bool      `json:"cert_by_ship,omitempty"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// Database is an app's database in the server's shared Postgres.
+type Database struct {
+	Engine    string    `json:"engine"`
+	Name      string    `json:"name"`
+	User      string    `json:"user"`
+	Host      string    `json:"host"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Backup struct {
+	App       string    `json:"app"`
+	Path      string    `json:"path"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type AppStatus struct {
 	App
-	State    string `json:"state"` // running | exited | restarting | missing
-	Healthy  bool   `json:"healthy"`
-	Restarts int    `json:"restarts"`
+	Database *Database `json:"database,omitempty"`
+	State    string    `json:"state"` // running | exited | restarting | stopped (no release, e.g. destroyed with data kept)
+	Healthy  bool      `json:"healthy"`
+	Restarts int       `json:"restarts"`
 }
 
 type DeployResult struct {

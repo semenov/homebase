@@ -74,7 +74,7 @@ Every command accepts --json for machine-readable output. Run ` + "`ship docs`" 
 	}
 	addDeployFlags(deploy, &d)
 
-	root.AddCommand(deploy, initCmd(), statusCmd(), listCmd(), logsCmd(), rollbackCmd(), restartCmd(), envCmd(), destroyCmd(), docsCmd())
+	root.AddCommand(deploy, initCmd(), statusCmd(), listCmd(), logsCmd(), rollbackCmd(), restartCmd(), envCmd(), dbCmd(), destroyCmd(), docsCmd())
 	return root
 }
 
@@ -84,6 +84,8 @@ func addDeployFlags(c *cobra.Command, d *deployOpts) {
 	f.IntVarP(&d.port, "port", "p", 0, "port the app listens on inside the container (default: detected)")
 	f.StringVar(&d.health, "health", "", "HTTP path that must answer non-5xx before traffic switches (default /)")
 	f.StringVar(&d.start, "start", "", "start command when no Dockerfile is present")
+	f.StringArrayVar(&d.volumes, "volume", nil, "container path to keep across deploys, e.g. /data (repeatable)")
+	f.StringVar(&d.release, "release", "", "command run in the new image before traffic switches, e.g. \"npm run migrate\"")
 	f.BoolVar(&d.remoteBuild, "remote-build", false, "build the image on the server instead of locally")
 	f.BoolVar(&d.noSave, "no-save", false, "do not write ship.toml after the first deploy")
 	f.DurationVar(&d.timeout, "timeout", 90*time.Second, "how long to wait for the app to become healthy")
@@ -207,6 +209,12 @@ func statusCmd() *cobra.Command {
 				}
 				if st.Previous != nil {
 					fmt.Printf("  previous %s (ship rollback)\n", st.Previous.ID)
+				}
+				for _, v := range st.Volumes {
+					fmt.Printf("  volume   %s (persistent)\n", v)
+				}
+				if st.Database != nil {
+					fmt.Printf("  database %s %s (DATABASE_URL, `ship db shell`)\n", st.Database.Engine, st.Database.Name)
 				}
 				if st.Restarts > 0 {
 					fmt.Printf("  ! container restarted %d times, see `ship logs`\n", st.Restarts)
@@ -362,14 +370,7 @@ func envCmd() *cobra.Command {
 			return err
 		}
 		if op != "list" && !noRestart {
-			var st proto.AppStatus
-			if err := r.Agent(nil, &st, "status", "--app", app); err == nil && st.Current != nil {
-				step("Restarting %s to apply changes", app)
-				if err := r.Agent(nil, nil, "restart", "--app", app); err != nil {
-					return err
-				}
-				res["restarted"] = true
-			}
+			res["restarted"] = restartIfDeployed(r, app)
 		}
 		show(res)
 		return nil
@@ -389,27 +390,56 @@ func envCmd() *cobra.Command {
 }
 
 func destroyCmd() *cobra.Command {
+	var data bool
 	c := &cobra.Command{
 		Use:   "destroy",
-		Short: "Remove the app: containers, images, proxy route and env",
-		Args:  cobra.NoArgs,
+		Short: "Remove the app (containers, images, route); data is kept unless --data",
+		Long: `Removes the app's containers, images and proxy route.
+
+Volumes, the database and env vars are kept, so deploying the app again brings
+its data back. With --data they are deleted too (the database gets a final
+backup in /var/lib/ship/backups/<app>/ first).`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r, app, err := target()
 			if err != nil {
 				return err
 			}
 			if !flagYes {
-				return proto.Errf(proto.CodeConfirm, fmt.Sprintf("re-run with --yes: `ship destroy -a %s --yes`", app), "destroy removes %q from %s permanently", app, r.Target)
+				what := "removes %q from %s (data is kept)"
+				if data {
+					what = "removes %q from %s including its volumes and database"
+				}
+				return proto.Errf(proto.CodeConfirm, fmt.Sprintf("re-run with --yes: `ship destroy -a %s%s --yes`", app, map[bool]string{true: " --data"}[data]), what, app, r.Target)
+			}
+			a := []string{"destroy", "--app", app}
+			if data {
+				a = append(a, "--data")
 			}
 			var res map[string]any
-			if err := r.Agent(nil, &res, "destroy", "--app", app); err != nil {
+			if err := r.Agent(nil, &res, a...); err != nil {
 				return err
 			}
-			emit(res, func() { fmt.Printf("✓ %s destroyed\n", app) })
+			emit(res, func() {
+				fmt.Printf("✓ %s destroyed\n", app)
+				if v, ok := res["kept_volumes"]; ok {
+					fmt.Printf("  kept volumes: %v\n", v)
+				}
+				if v, ok := res["kept_database"]; ok {
+					fmt.Printf("  kept database: %v\n", v)
+				}
+				if _, ok := res["kept_volumes"]; ok || res["kept_database"] != nil {
+					fmt.Printf("  a new deploy reuses them; delete with `ship destroy -a %s --data --yes`\n", app)
+				}
+				if v, ok := res["final_backup"]; ok {
+					fmt.Printf("  final database backup: %v\n", v)
+				}
+			})
 			return nil
 		},
 	}
 	c.Flags().BoolVarP(&flagYes, "yes", "y", false, "confirm")
+	c.Flags().BoolVar(&data, "data", false, "also delete volumes, the database and env vars")
 	return c
 }
 

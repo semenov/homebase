@@ -149,6 +149,31 @@ func (r *Remote) Stream(args ...string) error {
 	return cmd.Run()
 }
 
+// Interactive runs a shipd command with a terminal allocated (for psql).
+func (r *Remote) Interactive(args ...string) error {
+	cmd := exec.Command("ssh", sshArgs(r.Target, "-t", r.sudo+agentPath+" "+shellJoin(args))...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// Download copies a remote file to a local path.
+func (r *Remote) Download(remotePath, localPath string) error {
+	f, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	cmd := r.command(r.sudo + "cat " + shellQuote(remotePath))
+	cmd.Stdout = f
+	err = cmd.Run()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(localPath)
+	}
+	return err
+}
+
 // LoadImage pipes `docker save` output into `docker load` on the server.
 func (r *Remote) LoadImage(image string) error {
 	save := exec.Command("docker", "save", image)

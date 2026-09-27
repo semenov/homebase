@@ -16,14 +16,16 @@ const projectFile = "ship.toml"
 
 // Project is ship.toml in the project root. Every field is optional.
 type Project struct {
-	Name       string `toml:"name,omitempty"`
-	Server     string `toml:"server,omitempty"`
-	Domain     string `toml:"domain,omitempty"`
-	Port       int    `toml:"port,omitzero"`
-	Health     string `toml:"health,omitempty"`
-	Start      string `toml:"start,omitempty"`
-	Dockerfile string `toml:"dockerfile,omitempty"`
-	Build      string `toml:"build,omitempty"` // "local" (default) or "remote"
+	Name       string   `toml:"name,omitempty"`
+	Server     string   `toml:"server,omitempty"`
+	Domain     string   `toml:"domain,omitempty"`
+	Port       int      `toml:"port,omitzero"`
+	Health     string   `toml:"health,omitempty"`
+	Start      string   `toml:"start,omitempty"`
+	Dockerfile string   `toml:"dockerfile,omitempty"`
+	Build      string   `toml:"build,omitempty"`   // "local" (default) or "remote"
+	Volumes    []string `toml:"volumes,omitempty"` // container paths that persist across deploys
+	Release    string   `toml:"release,omitempty"` // run in the new image before traffic switches, e.g. migrations
 }
 
 func loadProject(dir string) (*Project, bool, error) {

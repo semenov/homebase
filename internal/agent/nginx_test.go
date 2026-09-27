@@ -49,3 +49,15 @@ func TestRenderSite(t *testing.T) {
 		t.Error("tls config should proxy only from the ssl server")
 	}
 }
+
+func TestVolumeName(t *testing.T) {
+	for in, want := range map[string]string{
+		"/data":            "ship-app-data",
+		"/app/uploads":     "ship-app-app-uploads",
+		"/var/lib/My_Data": "ship-app-var-lib-my-data",
+	} {
+		if got := volumeName("app", in); got != want {
+			t.Errorf("volumeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

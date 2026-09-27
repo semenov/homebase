@@ -16,6 +16,9 @@ ship --domain app.example.com # your own domain, automatic HTTPS
   (configs validated with `nginx -t`, certificates via certbot).
 - **Zero-downtime releases.** The new container has to answer HTTP before traffic switches;
   a broken release never replaces a working one. `ship rollback` switches back instantly.
+- **Data that survives deploys.** `volumes = ["/data"]` for uploads and SQLite; `ship db add` for a
+  Postgres database (`DATABASE_URL`, nightly backups, `ship db shell/backup/restore`); a `release`
+  command for migrations that runs before traffic switches.
 - **No Dockerfile needed** for Node, Python (Django/FastAPI/Flask), Go and static sites.
 - **Agent-friendly.** Never interactive, `--json` everywhere, stable error codes with hints and
   container logs. `ship docs` is a single-page reference; `skills/ship/SKILL.md` is a Claude Code skill.
@@ -29,7 +32,8 @@ ship --domain app.example.com # your own domain, automatic HTTPS
 | `ship logs [-f] [-n 100]` | container logs |
 | `ship rollback` / `ship restart` | zero-downtime switch to previous / fresh container |
 | `ship env ls\|set\|unset` | env vars stored on the server, app restarts automatically |
-| `ship destroy --yes` | remove everything belonging to the app |
+| `ship db add\|info\|shell\|backup\|restore` | Postgres database for the app |
+| `ship destroy --yes [--data]` | remove the app; volumes and database are kept unless `--data` |
 
 ## Build
 

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +42,8 @@ func cmdHasImage(args []string) (any, error) {
 }
 
 func appStatus(a *proto.App) *proto.AppStatus {
-	st := &proto.AppStatus{App: *a, State: "missing"}
+	st := &proto.AppStatus{App: *a, State: "stopped"}
+	st.Database, _ = loadDB(a.Name)
 	if a.Current == nil {
 		return st
 	}
@@ -158,7 +158,7 @@ func redeploy(name string, args []string, pick func(*proto.App) (*proto.Release,
 	if err != nil {
 		return nil, err
 	}
-	return release(cfg, a, rel.Image, rel.ContainerPort, *timeout)
+	return release(cfg, a, rel.Image, rel.ContainerPort, *timeout, "")
 }
 
 // env: shipd env list|set|unset --app X [KEY=VALUE | KEY]...
@@ -208,13 +208,7 @@ func cmdEnv(args []string) (any, error) {
 		return nil, proto.Errf(proto.CodeUsage, "", "unknown env operation %q", op)
 	}
 	if op != "list" {
-		var b strings.Builder
-		for _, k := range order {
-			if v, ok := env[k]; ok {
-				b.WriteString(k + "=" + v + "\n")
-			}
-		}
-		if err := writeFileAtomic(path, []byte(b.String()), 0o600); err != nil {
+		if err := writeEnv(path, env, order); err != nil {
 			return nil, err
 		}
 	}
@@ -226,6 +220,39 @@ func cmdEnv(args []string) (any, error) {
 		out[k] = v
 	}
 	return map[string]any{"app": *name, "env": out}, nil
+}
+
+func writeEnv(path string, env map[string]string, order []string) error {
+	var b strings.Builder
+	for _, k := range order {
+		if v, ok := env[k]; ok {
+			b.WriteString(k + "=" + v + "\n")
+		}
+	}
+	return writeFileAtomic(path, []byte(b.String()), 0o600)
+}
+
+// setEnv sets (or with an empty value, removes) variables in the app's env file.
+func setEnv(app string, vars map[string]string) error {
+	path, err := ensureEnvFile(app)
+	if err != nil {
+		return err
+	}
+	env, order, err := readEnv(path)
+	if err != nil {
+		return err
+	}
+	for k, v := range vars {
+		if v == "" {
+			delete(env, k)
+			continue
+		}
+		if _, ok := env[k]; !ok {
+			order = append(order, k)
+		}
+		env[k] = v
+	}
+	return writeEnv(path, env, order)
 }
 
 func readEnv(path string) (map[string]string, []string, error) {
@@ -255,6 +282,7 @@ func readEnv(path string) (map[string]string, []string, error) {
 func cmdDestroy(args []string) (any, error) {
 	fs := newFlags("destroy")
 	name := fs.String("app", "", "")
+	data := fs.Bool("data", false, "also delete volumes and the database")
 	if err := parse(fs, args); err != nil {
 		return nil, err
 	}
@@ -281,8 +309,46 @@ func cmdDestroy(args []string) (any, error) {
 	if imgs, _ := output("docker", "images", "ship/"+a.Name, "--format", "{{.Repository}}:{{.Tag}}"); strings.TrimSpace(imgs) != "" {
 		combined("docker", append([]string{"rmi"}, strings.Fields(imgs)...)...)
 	}
-	if err := os.RemoveAll(filepath.Clean(appDir(a.Name))); err != nil {
+
+	res := map[string]any{"app": a.Name, "destroyed": true, "data_deleted": *data}
+	db, _ := loadDB(a.Name)
+	var volumes []string
+	for _, v := range a.Volumes {
+		volumes = append(volumes, volumeName(a.Name, v))
+	}
+	if !*data {
+		// keep the app record (without releases), env, database and volumes so a
+		// later deploy picks them up again and `destroy --data` can still find them
+		a.Current, a.Previous, a.UpdatedAt = nil, nil, time.Now().UTC()
+		if err := saveApp(a); err != nil {
+			return nil, err
+		}
+		if len(volumes) > 0 {
+			res["kept_volumes"] = volumes
+		}
+		if db != nil {
+			res["kept_database"] = db.Name
+		}
+		return res, nil
+	}
+	if db != nil {
+		b, err := backupDB(a.Name, db)
+		if err != nil {
+			return nil, err
+		}
+		progress("Final backup: %s", b.Path)
+		res["final_backup"] = b.Path
+		progress("Dropping database %s", db.Name)
+		if err := dropDB(a.Name, db); err != nil {
+			return nil, err
+		}
+	}
+	for _, v := range volumes {
+		progress("Removing volume %s", v)
+		combined("docker", "volume", "rm", v)
+	}
+	if err := os.RemoveAll(appDir(a.Name)); err != nil {
 		return nil, err
 	}
-	return map[string]any{"app": a.Name, "destroyed": true}, nil
+	return res, nil
 }

@@ -63,6 +63,14 @@ func Main(args []string) int {
 		data, err = cmdRestart(rest)
 	case "env":
 		data, err = cmdEnv(rest)
+	case "db":
+		if len(rest) > 0 && rest[0] == "shell" {
+			if _, err = cmdDB(rest); err == nil {
+				return 0
+			}
+			break
+		}
+		data, err = cmdDB(rest)
 	case "destroy":
 		data, err = cmdDestroy(rest)
 	default:

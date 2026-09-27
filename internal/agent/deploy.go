@@ -1,11 +1,16 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +30,9 @@ func cmdDeploy(args []string) (any, error) {
 	port := fs.Int("port", 0, "container port")
 	domain := fs.String("domain", "", "")
 	health := fs.String("health", "", "")
+	releaseCmd := fs.String("release-cmd", "", "command run in the new image before traffic switches")
+	var volumes stringList
+	fs.Var(&volumes, "volume", "container path backed by a persistent volume (repeatable)")
 	ip := fs.String("ip", "", "")
 	timeout := fs.Duration("timeout", 60*time.Second, "")
 	if err := parse(fs, args); err != nil {
@@ -68,7 +76,16 @@ func cmdDeploy(args []string) (any, error) {
 	if *health != "" {
 		a.HealthPath = *health
 	}
-	return release(cfg, a, *image, *port, *timeout)
+	for _, v := range volumes {
+		if !path.IsAbs(v) || path.Clean(v) == "/" {
+			return nil, proto.Errf(proto.CodeConfig, `use absolute paths like "/data"`, "invalid volume path %q", v)
+		}
+		// volumes are only ever added: dropping one from ship.toml must not hide data
+		if v = path.Clean(v); !slices.Contains(a.Volumes, v) {
+			a.Volumes = append(a.Volumes, v)
+		}
+	}
+	return release(cfg, a, *image, *port, *timeout, *releaseCmd)
 }
 
 func defaultDomain(cfg *serverConfig, app string) (string, error) {
@@ -83,9 +100,12 @@ func defaultDomain(cfg *serverConfig, app string) (string, error) {
 
 // release starts image as a new container next to the current one, waits until
 // it answers HTTP, points nginx at it and only then removes the old container.
-func release(cfg *serverConfig, a *proto.App, image string, containerPort int, timeout time.Duration) (*proto.DeployResult, error) {
+func release(cfg *serverConfig, a *proto.App, image string, containerPort int, timeout time.Duration, releaseCmd string) (*proto.DeployResult, error) {
 	envFile, err := ensureEnvFile(a.Name)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureNetwork(); err != nil {
 		return nil, err
 	}
 	hostPort, err := allocPort(a)
@@ -104,17 +124,23 @@ func release(cfg *serverConfig, a *proto.App, image string, containerPort int, t
 		rel.Container += "b"
 	}
 
+	if releaseCmd != "" {
+		if err := runReleaseCommand(a, rel, envFile, releaseCmd); err != nil {
+			pruneImages(a)
+			return nil, err
+		}
+	}
+
 	progress("Starting container %s (port %d → %d)", rel.Container, hostPort, containerPort)
-	out, err := combined("docker", "run", "-d",
+	args := []string{"run", "-d",
 		"--name", rel.Container,
 		"--restart", "unless-stopped",
-		"--label", "ship.app="+a.Name,
-		"--label", "ship.release="+rel.ID,
+		"--label", "ship.app=" + a.Name,
+		"--label", "ship.release=" + rel.ID,
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort),
-		"--env-file", envFile,
-		"-e", "PORT="+strconv.Itoa(containerPort),
-		"--log-opt", "max-size=10m", "--log-opt", "max-file=3",
-		image)
+		"--log-opt", "max-size=10m", "--log-opt", "max-file=3"}
+	args = append(args, containerEnv(a, envFile, containerPort)...)
+	out, err := combined("docker", append(args, image)...)
 	if err != nil {
 		discard(a, rel.Container)
 		return nil, &proto.Error{Code: proto.CodeContainer, Message: "docker run failed", Logs: tail(out, 20)}
@@ -153,6 +179,58 @@ func release(cfg *serverConfig, a *proto.App, image string, containerPort int, t
 	pruneImages(a)
 	return &proto.DeployResult{App: a.Name, URL: a.URL, Domain: a.Domain, TLS: a.TLS, Release: rel, Warnings: warnings}, nil
 }
+
+// containerEnv returns the docker run flags shared by the app container and its
+// release command: network, env, and persistent volumes.
+func containerEnv(a *proto.App, envFile string, containerPort int) []string {
+	args := []string{"--network", shipNetwork, "--env-file", envFile, "-e", "PORT=" + strconv.Itoa(containerPort)}
+	for _, v := range a.Volumes {
+		args = append(args, "-v", volumeName(a.Name, v)+":"+v)
+	}
+	if len(a.Volumes) > 0 {
+		args = append(args, "-e", "DATA_DIR="+a.Volumes[0])
+	}
+	return args
+}
+
+var volumeSlugRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// volumeName maps a container path to a docker volume: /data → ship-<app>-data.
+func volumeName(app, p string) string {
+	return "ship-" + app + "-" + strings.Trim(volumeSlugRe.ReplaceAllString(strings.ToLower(p), "-"), "-")
+}
+
+// runReleaseCommand runs cmd (e.g. migrations) once in the new image with the
+// app's env and volumes. The old release keeps serving if it fails.
+func runReleaseCommand(a *proto.App, rel proto.Release, envFile, cmd string) error {
+	progress("Running release command: %s", cmd)
+	name := "ship-" + a.Name + "-release-" + rel.ID
+	args := append([]string{"run", "--rm", "--name", name, "--label", "ship.app=" + a.Name},
+		containerEnv(a, envFile, rel.ContainerPort)...)
+	args = append(args, "--entrypoint", "sh", rel.Image, "-c", cmd)
+	ctx, cancel := context.WithTimeout(context.Background(), releaseLimit)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	if err != nil {
+		combined("docker", "rm", "-f", name)
+		msg := "release command failed"
+		if ctx.Err() != nil {
+			msg = "release command timed out after " + releaseLimit.String()
+		}
+		return &proto.Error{Code: proto.CodeRelease, Message: msg, Hint: "the previous release is still serving; fix the command or the code and redeploy", Logs: tail(string(out), 40)}
+	}
+	for _, line := range strings.Split(strings.TrimSpace(tail(string(out), 10)), "\n") {
+		if line != "" {
+			progress("  %s", line)
+		}
+	}
+	return nil
+}
+
+type stringList []string
+
+func (s *stringList) String() string     { return strings.Join(*s, ",") }
+func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
 func waitHealthy(container string, port int, path string, timeout time.Duration) *proto.Error {
 	hint := "check the logs below; the app must listen on 0.0.0.0 and the port given by $PORT (or pass --port)"

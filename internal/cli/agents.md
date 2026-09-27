@@ -19,6 +19,8 @@ The first deploy writes `ship.toml` (name + server). Commit it; later deploys ar
       --port 3000                   port the app listens on inside the container (default: detected)
       --health /healthz             path that must answer non-5xx before the switch (default /)
       --start "cmd"                 start command when there is no Dockerfile
+      --volume /data                keep this container path across deploys (repeatable)
+      --release "npm run migrate"   run in the new image before traffic switches
       --remote-build                build on the server instead of locally
       --timeout 90s                 health check timeout
     ship status                     URL, state, health, current/previous release
@@ -29,7 +31,13 @@ The first deploy writes `ship.toml` (name + server). Commit it; later deploys ar
     ship env ls [--reveal]          env vars (stored on the server, 0600)
     ship env set K=V [K2=V2...]     set and restart (use --no-restart to skip)
     ship env unset K...
-    ship destroy --yes              remove app, containers, images, proxy route, env
+    ship db add                     create a Postgres database for the app, sets DATABASE_URL
+    ship db info                    database and its backups
+    ship db shell [-c "SQL"]        psql (interactive, or one statement with -c)
+    ship db backup [--download|-o F] dump now (nightly backups run automatically, last 7 kept)
+    ship db restore FILE --yes      replace the database (pg_dump -Fc or .sql); safety backup first
+    ship destroy --yes              remove containers, images, route; KEEPS volumes, database, env
+    ship destroy --data --yes       also delete volumes and the database (final backup is kept)
     ship init user@host [--install] [--base-domain apps.example.com] [--no-default]
 
 Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.
@@ -54,6 +62,26 @@ Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.
 The container always gets `PORT=<port>`; the app must listen on `0.0.0.0:$PORT`.
 Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `.env*` are excluded.
 
+## Data: files and databases
+
+The container is replaced on every deploy, rollback and restart, so anything written inside it
+is lost. Persist data in one of two ways:
+
+- Files (uploads, SQLite): `volumes = ["/data"]` in ship.toml. Each path is a docker volume
+  (`ship-<app>-data`) mounted into every release; the app gets `DATA_DIR=/data`. For SQLite,
+  put the database file there and enable WAL mode.
+- Postgres: `ship db add` (can run before the first deploy). The server runs one shared
+  Postgres container (`ship-postgres`, not exposed to the internet); each app gets its own
+  database and role, and `DATABASE_URL` in its env. Nightly `pg_dump` backups go to
+  `/var/lib/ship/backups/<app>/` (last 7 kept).
+
+Schema migrations: `release = "npm run migrate"` in ship.toml. It runs once in the new image,
+with the app's env and volumes, before traffic switches; if it fails (`release_command_failed`),
+the old release keeps serving. It does not run on rollback or restart, so keep migrations
+backward compatible with the previous release.
+
+Volumes are only ever added by deploys; removing a path from ship.toml does not delete it.
+
 ## ship.toml
 
     name = "my-app"
@@ -64,6 +92,8 @@ Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `.env*` are excluded
     start = "node dist/server.js"   # optional, only without Dockerfile
     dockerfile = "deploy/Dockerfile" # optional
     build = "remote"                # optional: build on the server
+    volumes = ["/data"]             # optional: persistent paths
+    release = "npm run migrate"     # optional: runs before traffic switches
 
 ## For AI agents
 
@@ -76,13 +106,17 @@ Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `.env*` are excluded
 - Error codes and exit codes:
   `usage`(2) `confirmation_required`(2) `config`(3) `stack_not_detected`(3) `server_not_ready`(3)
   `build_failed`(4) `upload_failed`(4) `container_failed`(5) `health_check_failed`(5)
-  `proxy_config_failed`(5) `deploy_in_progress`(5) `ssh_failed`(6) `app_not_found`(7)
+  `proxy_config_failed`(5) `deploy_in_progress`(5) `release_command_failed`(5)
+  `database_failed`(5) `ssh_failed`(6) `app_not_found`(7)
   `no_previous_release`(7) `internal`(1).
 - On `container_failed`/`health_check_failed`, `error.logs` holds the last container output;
   the previous release is still serving. Fix and redeploy.
 - To verify a deploy: `ship status --json` => `data.healthy == true`.
 - Secrets: `ship env set KEY=value` (can be run before the first deploy); never commit them.
-- `ship destroy` requires `--yes`.
+- `ship destroy` requires `--yes` and keeps data; only use `--data` when the user explicitly
+  asks to delete the app's data.
+- Apps that store files or need a database: add `volumes` and/or run `ship db add` before
+  deploying; read `DATA_DIR` / `DATABASE_URL` from the environment.
 
 ## Server side
 

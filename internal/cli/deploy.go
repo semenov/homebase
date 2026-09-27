@@ -26,6 +26,8 @@ type deployOpts struct {
 	port        int
 	health      string
 	start       string
+	volumes     []string
+	release     string
 	remoteBuild bool
 	noSave      bool
 	timeout     time.Duration
@@ -97,6 +99,12 @@ func runDeploy(o deployOpts) error {
 	if h := firstNonEmpty(o.health, proj.Health); h != "" {
 		args = append(args, "--health", h)
 	}
+	for _, v := range append(proj.Volumes, o.volumes...) {
+		args = append(args, "--volume", v)
+	}
+	if rc := firstNonEmpty(o.release, proj.Release); rc != "" {
+		args = append(args, "--release-cmd", rc)
+	}
 	var res proto.DeployResult
 	if err := r.Agent(nil, &res, args...); err != nil {
 		return err
@@ -104,7 +112,7 @@ func runDeploy(o deployOpts) error {
 
 	saved := ""
 	if !found && !o.noSave {
-		np := &Project{Name: name, Server: server, Domain: o.domain, Health: o.health, Start: o.start}
+		np := &Project{Name: name, Server: server, Domain: o.domain, Health: o.health, Start: o.start, Volumes: o.volumes, Release: o.release}
 		if o.port > 0 {
 			np.Port = o.port
 		}
