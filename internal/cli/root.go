@@ -88,6 +88,7 @@ func addDeployFlags(c *cobra.Command, d *deployOpts) {
 	f.StringVar(&d.health, "health", "", "HTTP path that must answer non-5xx before traffic switches (default /)")
 	f.StringVar(&d.start, "start", "", "start command when no Dockerfile is present")
 	f.StringArrayVar(&d.volumes, "volume", nil, "container path to keep across deploys, e.g. /data (repeatable)")
+	f.StringVar(&d.memory, "memory", "", `memory limit like "256m" (the app restarts if it exceeds it)`)
 	f.StringVar(&d.release, "release", "", "command run in the new image before traffic switches, e.g. \"npm run migrate\"")
 	f.BoolVar(&d.remoteBuild, "remote-build", false, "build the image on the server instead of locally")
 	f.BoolVar(&d.noSave, "no-save", false, "do not write ship.toml after the first deploy")
@@ -210,6 +211,19 @@ func statusCmd() *cobra.Command {
 					health = "UNHEALTHY"
 				}
 				fmt.Printf("%s  %s  %s (%s)\n", st.Name, st.URL, st.State, health)
+				if r := st.Resources; r != nil {
+					fmt.Printf("  usage    cpu %s · mem %s", cpuStr(r.CPUPercent), memStr(r))
+					if r.VolumeBytes > 0 {
+						fmt.Printf(" · volumes %s", humanBytes(r.VolumeBytes))
+					}
+					if r.DatabaseBytes > 0 {
+						fmt.Printf(" · database %s", humanBytes(r.DatabaseBytes))
+					}
+					fmt.Println()
+				}
+				if st.OOMKills > 0 {
+					fmt.Printf("  ! killed %d times for running out of memory since this release; raise `memory` in ship.toml\n", st.OOMKills)
+				}
 				if st.Current != nil {
 					fmt.Printf("  release  %s · %s · deployed %s ago\n", st.Current.ID, st.Current.Image, ago(st.Current.DeployedAt))
 				}
@@ -256,19 +270,35 @@ func listCmd() *cobra.Command {
 				}
 				sort.Slice(out.Apps, func(i, j int) bool { return out.Apps[i].Name < out.Apps[j].Name })
 				tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-				fmt.Fprintln(tw, "APP\tURL\tSTATE\tRELEASE\tDEPLOYED")
+				fmt.Fprintln(tw, "APP\tURL\tSTATE\tCPU\tMEM\tDISK\tDEPLOYED")
 				for _, a := range out.Apps {
 					state := a.State
 					if a.State == "running" && !a.Healthy {
 						state = "unhealthy"
 					}
-					rel, when := "-", "-"
-					if a.Current != nil {
-						rel, when = a.Current.ID, ago(a.Current.DeployedAt)+" ago"
+					if a.OOMKills > 0 {
+						state += fmt.Sprintf(" (oom×%d)", a.OOMKills)
 					}
-					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Name, a.URL, state, rel, when)
+					cpu, mem, disk, when := "-", "-", "-", "-"
+					if a.Current != nil {
+						when = ago(a.Current.DeployedAt) + " ago"
+					}
+					if r := a.Resources; r != nil {
+						if a.State == "running" {
+							cpu, mem = cpuStr(r.CPUPercent), memStr(r)
+						}
+						if d := r.VolumeBytes + r.DatabaseBytes; d > 0 {
+							disk = humanBytes(d)
+						}
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.URL, state, cpu, mem, disk, when)
 				}
 				tw.Flush()
+				srv := out.Server
+				if srv.MemTotal > 0 {
+					fmt.Printf("\nserver: mem %s free of %s · disk %s free of %s · load %.2f (%d cpu)\n",
+						humanBytes(srv.MemAvailable), humanBytes(srv.MemTotal), humanBytes(srv.DiskFree), humanBytes(srv.DiskTotal), srv.Load1, srv.CPUs)
+				}
 			})
 			return nil
 		},
@@ -513,6 +543,16 @@ func projectSummary() string {
 	}
 	w("\nNext: `ship --json` to deploy, then `ship status --json`. If the app needs Postgres, run `ship db add` first.")
 	return b.String()
+}
+
+func cpuStr(p float64) string { return fmt.Sprintf("%.1f%%", p) }
+
+// memStr shows memory use, against the limit when the app has one.
+func memStr(r *proto.Resources) string {
+	if r.MemLimitBytes > 0 {
+		return fmt.Sprintf("%s/%s", humanBytes(r.MemBytes), humanBytes(r.MemLimitBytes))
+	}
+	return humanBytes(r.MemBytes)
 }
 
 func ago(t time.Time) string {

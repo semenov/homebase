@@ -61,3 +61,16 @@ func TestVolumeName(t *testing.T) {
 		}
 	}
 }
+
+func TestSizes(t *testing.T) {
+	for in, want := range map[string]int64{"30.04MiB": 31499223, "25.1kB": 25100, "1.922GiB": 2063731785, "0B": 0, "bogus": 0} {
+		if got := parseSize(in); got != want {
+			t.Errorf("parseSize(%q) = %d, want %d", in, got, want)
+		}
+	}
+	for in, want := range map[string]int64{"256m": 256 << 20, "1g": 1 << 30, "512k": 512 << 10, "": 0} {
+		if got := memoryBytes(in); got != want {
+			t.Errorf("memoryBytes(%q) = %d, want %d", in, got, want)
+		}
+	}
+}

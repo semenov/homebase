@@ -30,7 +30,7 @@ ship --domain app.example.com # your own domain, automatic HTTPS
 | | |
 |---|---|
 | `ship [dir]` | build and release (`--domain`, `--port`, `--health`, `--start`, `--remote-build`) |
-| `ship status` / `ship ls` | health, URL and releases of one / all apps |
+| `ship status` / `ship ls` | health, URL, releases, CPU/memory/disk usage of one / all apps, server load |
 | `ship logs [-f] [-n 100]` | container logs |
 | `ship rollback` / `ship restart` | zero-downtime switch to previous / fresh container |
 | `ship env ls\|set\|unset` | env vars stored on the server, app restarts automatically |

@@ -20,11 +20,12 @@ The first deploy writes `ship.toml` (name + server). Commit it; later deploys ar
       --health /healthz             path that must answer non-5xx before the switch (default /)
       --start "cmd"                 start command when there is no Dockerfile
       --volume /data                keep this container path across deploys (repeatable)
+      --memory 256m                 memory limit; the app is restarted if it exceeds it
       --release "npm run migrate"   run in the new image before traffic switches
       --remote-build                build on the server instead of locally
       --timeout 90s                 health check timeout
-    ship status                     URL, state, health, current/previous release
-    ship ls                         all apps on the server
+    ship status                     URL, state, health, CPU/memory/disk usage, releases
+    ship ls                         all apps with CPU, memory, disk, plus server memory/disk/load
     ship logs [-n 100] [-f] [--since 10m]
     ship rollback                   back to the previous release (zero downtime)
     ship restart                    restart current release (zero downtime)
@@ -95,6 +96,7 @@ Volumes are only ever added by deploys; removing a path from ship.toml does not 
     build = "remote"                # optional: build on the server
     volumes = ["/data"]             # optional: persistent paths
     release = "npm run migrate"     # optional: runs before traffic switches
+    memory = "256m"                 # optional: memory limit (removing it removes the limit)
 
 ## For AI agents
 
@@ -113,6 +115,9 @@ Volumes are only ever added by deploys; removing a path from ship.toml does not 
 - On `container_failed`/`health_check_failed`, `error.logs` holds the last container output;
   the previous release is still serving. Fix and redeploy.
 - To verify a deploy: `ship status --json` => `data.healthy == true`.
+- Resource usage: `data.resources` (`cpu_percent`, `mem_bytes`, `mem_limit_bytes`, `volume_bytes`,
+  `database_bytes`) and `data.oom_kills` (> 0 means the app hit its memory limit: raise `memory`).
+  `ship ls --json` adds `server` with `mem_available_bytes`, `disk_free_bytes`, `load1`, `cpus`.
 - Secrets: `ship env set KEY=value` (can be run before the first deploy); never commit them.
 - `ship destroy` requires `--yes` and keeps data; only use `--data` when the user explicitly
   asks to delete the app's data.

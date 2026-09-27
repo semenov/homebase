@@ -28,6 +28,7 @@ type deployOpts struct {
 	start       string
 	volumes     []string
 	release     string
+	memory      string
 	remoteBuild bool
 	noSave      bool
 	timeout     time.Duration
@@ -105,6 +106,8 @@ func runDeploy(o deployOpts) error {
 	if rc := firstNonEmpty(o.release, proj.Release); rc != "" {
 		args = append(args, "--release-cmd", rc)
 	}
+	// ship.toml is the source of truth for the limit: no value removes it
+	args = append(args, "--memory", firstNonEmpty(o.memory, proj.Memory, "none"))
 	var res proto.DeployResult
 	if err := r.Agent(nil, &res, args...); err != nil {
 		return err
@@ -112,7 +115,7 @@ func runDeploy(o deployOpts) error {
 
 	saved := ""
 	if !found && !o.noSave {
-		np := &Project{Name: name, Server: server, Domain: o.domain, Health: o.health, Start: o.start, Volumes: o.volumes, Release: o.release}
+		np := &Project{Name: name, Server: server, Domain: o.domain, Health: o.health, Start: o.start, Volumes: o.volumes, Release: o.release, Memory: o.memory}
 		if o.port > 0 {
 			np.Port = o.port
 		}

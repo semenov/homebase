@@ -83,6 +83,7 @@ type App struct {
 	TLS        bool      `json:"tls"`
 	HealthPath string    `json:"health_path"`
 	Volumes    []string  `json:"volumes,omitempty"` // container paths backed by persistent volumes
+	Memory     string    `json:"memory,omitempty"`  // docker memory limit, e.g. "256m"; empty = none
 	Current    *Release  `json:"current,omitempty"`
 	Previous   *Release  `json:"previous,omitempty"`
 	CertByShip bool      `json:"cert_by_ship,omitempty"`
@@ -105,12 +106,23 @@ type Backup struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Resources is a point-in-time snapshot of what an app uses.
+type Resources struct {
+	CPUPercent    float64 `json:"cpu_percent"`               // 100 = one full core
+	MemBytes      int64   `json:"mem_bytes"`                 // current memory use
+	MemLimitBytes int64   `json:"mem_limit_bytes,omitempty"` // set when the app has a memory limit
+	VolumeBytes   int64   `json:"volume_bytes,omitempty"`
+	DatabaseBytes int64   `json:"database_bytes,omitempty"`
+}
+
 type AppStatus struct {
 	App
-	Database *Database `json:"database,omitempty"`
-	State    string    `json:"state"` // running | exited | restarting | stopped (no release, e.g. destroyed with data kept)
-	Healthy  bool      `json:"healthy"`
-	Restarts int       `json:"restarts"`
+	Database  *Database  `json:"database,omitempty"`
+	Resources *Resources `json:"resources,omitempty"`
+	OOMKills  int        `json:"oom_kills,omitempty"` // out-of-memory kills since the current release started
+	State     string     `json:"state"`               // running | exited | restarting | stopped (no release, e.g. destroyed with data kept)
+	Healthy   bool       `json:"healthy"`
+	Restarts  int        `json:"restarts"`
 }
 
 type DeployResult struct {
@@ -132,4 +144,10 @@ type ServerInfo struct {
 	SSLListen    []string `json:"ssl_listen,omitempty"`
 	Docker       string   `json:"docker"`
 	Apps         int      `json:"apps"`
+	CPUs         int      `json:"cpus"`
+	Load1        float64  `json:"load1"`
+	MemTotal     int64    `json:"mem_total_bytes"`
+	MemAvailable int64    `json:"mem_available_bytes"`
+	DiskTotal    int64    `json:"disk_total_bytes"`
+	DiskFree     int64    `json:"disk_free_bytes"`
 }

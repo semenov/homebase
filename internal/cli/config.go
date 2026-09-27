@@ -26,6 +26,7 @@ type Project struct {
 	Build      string   `toml:"build,omitempty"`   // "local" (default) or "remote"
 	Volumes    []string `toml:"volumes,omitempty"` // container paths that persist across deploys
 	Release    string   `toml:"release,omitempty"` // run in the new image before traffic switches, e.g. migrations
+	Memory     string   `toml:"memory,omitempty"`  // memory limit like "256m"; the app restarts if it exceeds it
 }
 
 func loadProject(dir string) (*Project, bool, error) {

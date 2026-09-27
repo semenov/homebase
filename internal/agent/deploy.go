@@ -31,6 +31,7 @@ func cmdDeploy(args []string) (any, error) {
 	domain := fs.String("domain", "", "")
 	health := fs.String("health", "", "")
 	releaseCmd := fs.String("release-cmd", "", "command run in the new image before traffic switches")
+	memory := fs.String("memory", "", `memory limit like "256m"; "none" removes it`)
 	var volumes stringList
 	fs.Var(&volumes, "volume", "container path backed by a persistent volume (repeatable)")
 	ip := fs.String("ip", "", "")
@@ -75,6 +76,15 @@ func cmdDeploy(args []string) (any, error) {
 	}
 	if *health != "" {
 		a.HealthPath = *health
+	}
+	switch {
+	case *memory == "none":
+		a.Memory = ""
+	case *memory != "":
+		if !memoryRe.MatchString(*memory) || memoryBytes(*memory) < 6<<20 {
+			return nil, proto.Errf(proto.CodeConfig, `use a size like "256m" or "1g" (at least 6m)`, "invalid memory limit %q", *memory)
+		}
+		a.Memory = strings.ToLower(*memory)
 	}
 	for _, v := range volumes {
 		if !path.IsAbs(v) || path.Clean(v) == "/" {
@@ -139,6 +149,9 @@ func release(cfg *serverConfig, a *proto.App, image string, containerPort int, t
 		"--label", "ship.release=" + rel.ID,
 		"-p", fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort),
 		"--log-opt", "max-size=10m", "--log-opt", "max-file=3"}
+	if a.Memory != "" {
+		args = append(args, "--memory", a.Memory, "--memory-swap", a.Memory)
+	}
 	args = append(args, containerEnv(a, envFile, containerPort)...)
 	out, err := combined("docker", append(args, image)...)
 	if err != nil {
@@ -239,6 +252,9 @@ func waitHealthy(container string, port int, path string, timeout time.Duration)
 		st, err := inspectContainer(container)
 		if err != nil {
 			return proto.Errf(proto.CodeContainer, hint, "container disappeared: %v", err)
+		}
+		if st.OOMKilled {
+			return proto.Errf(proto.CodeContainer, "raise `memory` in ship.toml (or remove the limit) and redeploy", "container ran out of memory during startup")
 		}
 		if st.Status == "exited" || st.Status == "dead" {
 			return proto.Errf(proto.CodeContainer, hint, "container exited with code %d", st.ExitCode)

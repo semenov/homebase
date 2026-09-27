@@ -49,6 +49,7 @@ func appStatus(a *proto.App) *proto.AppStatus {
 	}
 	if cs, err := inspectContainer(a.Current.Container); err == nil {
 		st.State, st.Restarts = cs.Status, cs.Restarts
+		st.OOMKills = oomKills(a.Current.Container, a.Current.DeployedAt)
 		st.Healthy = cs.Status == "running" && probe(a.Current.HostPort, a.HealthPath)
 	}
 	return st
@@ -64,7 +65,9 @@ func cmdStatus(args []string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return appStatus(a), nil
+	st := appStatus(a)
+	fillResources([]*proto.AppStatus{st})
+	return st, nil
 }
 
 func cmdList(args []string) (any, error) {
@@ -83,6 +86,8 @@ func cmdList(args []string) (any, error) {
 	for _, a := range apps {
 		out.Apps = append(out.Apps, appStatus(a))
 	}
+	fillResources(out.Apps)
+	hostResources(out.Server)
 	return out, nil
 }
 

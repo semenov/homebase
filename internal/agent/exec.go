@@ -29,23 +29,24 @@ func tail(s string, n int) string {
 }
 
 type containerState struct {
-	Status   string
-	Restarts int
-	ExitCode int
+	Status    string
+	Restarts  int
+	ExitCode  int
+	OOMKilled bool
 }
 
 func inspectContainer(name string) (*containerState, error) {
-	out, err := output("docker", "inspect", "--format", "{{.State.Status}} {{.RestartCount}} {{.State.ExitCode}}", name)
+	out, err := output("docker", "inspect", "--format", "{{.State.Status}} {{.RestartCount}} {{.State.ExitCode}} {{.State.OOMKilled}}", name)
 	if err != nil {
 		return nil, err
 	}
 	f := strings.Fields(out)
-	if len(f) != 3 {
+	if len(f) != 4 {
 		return nil, fmt.Errorf("unexpected docker inspect output %q", out)
 	}
 	restarts, _ := strconv.Atoi(f[1])
 	code, _ := strconv.Atoi(f[2])
-	return &containerState{Status: f[0], Restarts: restarts, ExitCode: code}, nil
+	return &containerState{Status: f[0], Restarts: restarts, ExitCode: code, OOMKilled: f[3] == "true"}, nil
 }
 
 func containerLogs(name string, n int) string {
