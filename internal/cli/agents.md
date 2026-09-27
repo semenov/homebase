@@ -29,7 +29,7 @@ The first deploy writes `ship.toml` (name + server). Commit it; later deploys ar
     ship env ls [--reveal]          env vars (stored on the server, 0600)
     ship env set K=V [K2=V2...]     set and restart (use --no-restart to skip)
     ship env unset K...
-    ship destroy --yes              remove app, containers, images, nginx config, env, cert
+    ship destroy --yes              remove app, containers, images, proxy route, env
     ship init user@host [--install] [--base-domain apps.example.com] [--no-default]
 
 Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.

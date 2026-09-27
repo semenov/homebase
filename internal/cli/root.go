@@ -391,7 +391,7 @@ func envCmd() *cobra.Command {
 func destroyCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "destroy",
-		Short: "Remove the app, its containers, images, nginx config, env and certificate",
+		Short: "Remove the app: containers, images, proxy route and env",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r, app, err := target()
