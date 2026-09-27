@@ -34,7 +34,7 @@ ship --domain app.example.com # your own domain, TLS via Let's Encrypt
 
 ```sh
 make          # builds linux shipd agents, embeds them, builds dist/ship
-make install  # copies ship to ~/go/bin
+make install  # copies ship to ~/.local/bin (override with BINDIR=...)
 make test
 ```
 

@@ -1,5 +1,6 @@
 AGENT_FLAGS = CGO_ENABLED=0 GOOS=linux
 LDFLAGS = -s -w
+BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: build agent install test clean
 
@@ -11,7 +12,7 @@ agent:
 	$(AGENT_FLAGS) GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o internal/agentbin/bin/shipd-linux-arm64 ./cmd/shipd
 
 install: build
-	install -m 755 dist/ship $(or $(GOBIN),$(HOME)/go/bin)/ship
+	install -d $(BINDIR) && install -m 755 dist/ship $(BINDIR)/ship
 
 test:
 	go test ./...
