@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,12 +15,21 @@ import (
 )
 
 type serverConfig struct {
-	PublicIP   string   `json:"public_ip"`
-	BaseDomain string   `json:"base_domain,omitempty"`
-	NginxDir   string   `json:"nginx_dir"`
-	SSLListen  []string `json:"ssl_listen"`
-	HTTPListen []string `json:"http_listen"`
+	Proxy      string `json:"proxy"` // caddy | nginx ("" in old configs means nginx)
+	PublicIP   string `json:"public_ip"`
+	BaseDomain string `json:"base_domain,omitempty"`
+	// nginx only
+	NginxDir   string   `json:"nginx_dir,omitempty"`
+	SSLListen  []string `json:"ssl_listen,omitempty"`
+	HTTPListen []string `json:"http_listen,omitempty"`
 	SSLOptions []string `json:"ssl_options,omitempty"`
+}
+
+func (c *serverConfig) proxy() string {
+	if c.Proxy == "" {
+		return proxyNginx
+	}
+	return c.Proxy
 }
 
 const commonConfName = "ship-000-common.conf"
@@ -27,13 +37,14 @@ const commonConfName = "ship-000-common.conf"
 var (
 	sniDefaultRe = regexp.MustCompile(`default\s+(127\.0\.0\.1:\d+)\s*;`)
 	routeSrcRe   = regexp.MustCompile(`\bsrc\s+(\S+)`)
+	ssUserRe     = regexp.MustCompile(`users:\(\("([^"]+)"`)
 )
 
 func cmdSetup(args []string) (any, error) {
 	fs := newFlags("setup")
 	ip := fs.String("ip", "", "public IP of the server")
 	base := fs.String("base-domain", "", "wildcard domain for apps, e.g. apps.example.com")
-	install := fs.Bool("install", false, "install missing docker/nginx/certbot")
+	install := fs.Bool("install", false, "install missing docker and caddy")
 	if err := parse(fs, args); err != nil {
 		return nil, err
 	}
@@ -41,9 +52,6 @@ func cmdSetup(args []string) (any, error) {
 		if err := installDeps(); err != nil {
 			return nil, err
 		}
-	}
-	if err := checkDeps(); err != nil {
-		return nil, err
 	}
 	old, _ := readServerConfig()
 	cfg, err := detectServer(*ip)
@@ -54,7 +62,7 @@ func cmdSetup(args []string) (any, error) {
 	if cfg.BaseDomain == "" && old != nil {
 		cfg.BaseDomain = old.BaseDomain
 	}
-	if err := writeCommonConf(cfg); err != nil {
+	if err := prepareProxy(cfg); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
@@ -63,25 +71,37 @@ func cmdSetup(args []string) (any, error) {
 	if err := writeJSON(serverFile, cfg); err != nil {
 		return nil, err
 	}
+	if old != nil && old.proxy() != cfg.proxy() {
+		progress("Proxy changed from %s to %s", old.proxy(), cfg.proxy())
+		if old.proxy() == proxyNginx {
+			removeNginxShipConfs(old.NginxDir)
+		}
+		reroute(cfg)
+	}
 	return serverInfo(cfg), nil
 }
 
 func serverInfo(cfg *serverConfig) *proto.ServerInfo {
 	apps, _ := listApps()
 	docker, _ := output("docker", "version", "--format", "{{.Server.Version}}")
-	nginx, _ := exec.Command("nginx", "-v").CombinedOutput()
-	_, certErr := exec.LookPath("certbot")
+	var version []byte
+	if cfg.proxy() == proxyCaddy {
+		version, _ = exec.Command("caddy", "version").Output()
+		version, _, _ = bytes.Cut(version, []byte(" "))
+	} else {
+		version, _ = exec.Command("nginx", "-v").CombinedOutput()
+		version = bytes.TrimPrefix(version, []byte("nginx version: "))
+	}
 	return &proto.ServerInfo{
-		Arch:       runtime.GOARCH,
-		PublicIP:   cfg.PublicIP,
-		BaseDomain: cfg.BaseDomain,
-		NginxDir:   cfg.NginxDir,
-		SSLListen:  cfg.SSLListen,
-		HTTPListen: cfg.HTTPListen,
-		Docker:     strings.TrimSpace(docker),
-		Nginx:      strings.TrimPrefix(strings.TrimSpace(string(nginx)), "nginx version: "),
-		Certbot:    certErr == nil,
-		Apps:       len(apps),
+		Arch:         runtime.GOARCH,
+		PublicIP:     cfg.PublicIP,
+		BaseDomain:   cfg.BaseDomain,
+		Proxy:        cfg.proxy(),
+		ProxyVersion: strings.TrimSpace(string(version)),
+		NginxDir:     cfg.NginxDir,
+		SSLListen:    cfg.SSLListen,
+		Docker:       strings.TrimSpace(docker),
+		Apps:         len(apps),
 	}
 }
 
@@ -95,7 +115,7 @@ func readServerConfig() (*serverConfig, error) {
 }
 
 // loadServer returns the saved server config, detecting it on first use so that
-// `ship deploy` works on a server that already has docker and nginx without `ship init`.
+// `ship deploy` works on a server that already has docker and a proxy without `ship init`.
 func loadServer(ip string) (*serverConfig, error) {
 	cfg, err := readServerConfig()
 	if err == nil {
@@ -108,14 +128,11 @@ func loadServer(ip string) (*serverConfig, error) {
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if err := checkDeps(); err != nil {
-		return nil, err
-	}
-	progress("First deploy to this server: detecting nginx setup")
+	progress("First deploy to this server: detecting setup")
 	if cfg, err = detectServer(ip); err != nil {
 		return nil, err
 	}
-	if err := writeCommonConf(cfg); err != nil {
+	if err := prepareProxy(cfg); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
@@ -124,37 +141,52 @@ func loadServer(ip string) (*serverConfig, error) {
 	return cfg, writeJSON(serverFile, cfg)
 }
 
-func checkDeps() error {
-	hint := "run `ship init <host> --install` to install docker, nginx and certbot"
-	if _, err := output("docker", "version", "--format", "{{.Server.Version}}"); err != nil {
-		return proto.Errf(proto.CodeServerNotReady, hint, "docker is not available on the server")
+const installHint = "run `ship init <host> --install` to install docker and caddy"
+
+// port443Owner returns the name of the process listening on :443, or "".
+func port443Owner() string {
+	out, _ := output("ss", "-ltnpH", "sport = :443")
+	if m := ssUserRe.FindStringSubmatch(out); m != nil {
+		return m[1]
 	}
-	if _, err := exec.LookPath("nginx"); err != nil {
-		return proto.Errf(proto.CodeServerNotReady, hint, "nginx is not installed on the server")
+	return ""
+}
+
+// detectProxy picks the reverse proxy: whoever serves :443 now, else an
+// installed Caddy (preferred) or nginx.
+func detectProxy() (string, error) {
+	owner := port443Owner()
+	switch {
+	case owner == "caddy":
+		return proxyCaddy, nil
+	case owner == "nginx":
+		return proxyNginx, nil
+	case owner != "":
+		return "", proto.Errf(proto.CodeServerNotReady, "ship works with caddy or nginx on :443", "port 443 is used by %q", owner)
 	}
-	if _, err := exec.LookPath("certbot"); err != nil {
-		return proto.Errf(proto.CodeServerNotReady, hint, "certbot is not installed on the server")
+	if _, err := exec.LookPath("caddy"); err == nil {
+		progress("Starting caddy")
+		if out, err := combined("systemctl", "enable", "--now", "caddy"); err != nil {
+			return "", &proto.Error{Code: proto.CodeServerNotReady, Message: "caddy is installed but does not start", Logs: tail(out, 20)}
+		}
+		return proxyCaddy, nil
 	}
-	return nil
+	if _, err := exec.LookPath("nginx"); err == nil {
+		return proxyNginx, nil
+	}
+	return "", proto.Errf(proto.CodeServerNotReady, installHint, "no reverse proxy (caddy or nginx) on the server")
+}
+
+func prepareProxy(cfg *serverConfig) error {
+	if cfg.proxy() == proxyCaddy {
+		return ensureCaddyfile()
+	}
+	return writeCommonConf(cfg)
 }
 
 func installDeps() error {
 	if _, err := exec.LookPath("apt-get"); err != nil {
-		return proto.Errf(proto.CodeServerNotReady, "install docker, nginx and certbot manually", "automatic install supports only Debian/Ubuntu")
-	}
-	var pkgs []string
-	if _, err := exec.LookPath("nginx"); err != nil {
-		pkgs = append(pkgs, "nginx")
-	}
-	if _, err := exec.LookPath("certbot"); err != nil {
-		pkgs = append(pkgs, "certbot")
-	}
-	if len(pkgs) > 0 {
-		progress("Installing %s", strings.Join(pkgs, ", "))
-		if out, err := combined("sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "+strings.Join(pkgs, " ")); err != nil {
-			return &proto.Error{Code: proto.CodeServerNotReady, Message: "apt-get install failed", Logs: tail(out, 30)}
-		}
-		combined("systemctl", "enable", "--now", "nginx")
+		return proto.Errf(proto.CodeServerNotReady, "install docker and caddy manually", "automatic install supports only Debian/Ubuntu")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		progress("Installing docker")
@@ -162,21 +194,52 @@ func installDeps() error {
 			return &proto.Error{Code: proto.CodeServerNotReady, Message: "docker install failed", Logs: tail(out, 30)}
 		}
 	}
+	if _, err := exec.LookPath("caddy"); err != nil && port443Owner() == "" {
+		progress("Installing caddy")
+		script := `set -e
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gpg
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
+apt-get update -qq
+apt-get install -y -qq caddy`
+		if out, err := combined("sh", "-c", script); err != nil {
+			return &proto.Error{Code: proto.CodeServerNotReady, Message: "caddy install failed", Logs: tail(out, 30)}
+		}
+	}
 	return nil
 }
 
 func detectServer(ip string) (*serverConfig, error) {
-	dump, err := combined("nginx", "-T")
-	if err != nil {
-		return nil, &proto.Error{Code: proto.CodeServerNotReady, Message: "current nginx config is invalid (nginx -T failed); fix it before deploying", Logs: tail(dump, 20)}
+	if _, err := output("docker", "version", "--format", "{{.Server.Version}}"); err != nil {
+		return nil, proto.Errf(proto.CodeServerNotReady, installHint, "docker is not available on the server")
 	}
-	cfg := &serverConfig{PublicIP: ip}
+	proxy, err := detectProxy()
+	if err != nil {
+		return nil, err
+	}
+	cfg := &serverConfig{Proxy: proxy, PublicIP: ip}
 	if cfg.PublicIP == "" {
 		if out, err := output("ip", "-4", "route", "get", "1.1.1.1"); err == nil {
 			if m := routeSrcRe.FindStringSubmatch(out); m != nil {
 				cfg.PublicIP = m[1]
 			}
 		}
+	}
+	if proxy == proxyNginx {
+		return cfg, detectNginx(cfg)
+	}
+	return cfg, nil
+}
+
+func detectNginx(cfg *serverConfig) error {
+	if _, err := exec.LookPath("certbot"); err != nil {
+		return proto.Errf(proto.CodeServerNotReady, "install certbot (apt-get install certbot)", "nginx mode needs certbot, which is not installed")
+	}
+	dump, err := combined("nginx", "-T")
+	if err != nil {
+		return &proto.Error{Code: proto.CodeServerNotReady, Message: "current nginx config is invalid (nginx -T failed); fix it before deploying", Logs: tail(dump, 20)}
 	}
 
 	// An SNI router (stream + ssl_preread) in front of the http vhosts means ssl
@@ -204,7 +267,7 @@ func detectServer(ip string) (*serverConfig, error) {
 	if _, err := os.Stat("/etc/letsencrypt/ssl-dhparams.pem"); err == nil {
 		cfg.SSLOptions = append(cfg.SSLOptions, "ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;")
 	}
-	return cfg, nil
+	return nil
 }
 
 func sniDefaultBackend(dump string) string {

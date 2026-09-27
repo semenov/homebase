@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -131,7 +130,7 @@ func release(cfg *serverConfig, a *proto.App, image string, containerPort int, t
 	warnings, err := route(cfg, a, hostPort)
 	if err != nil {
 		if a.Current != nil {
-			route(cfg, a, a.Current.HostPort) // point nginx back at the running release
+			route(cfg, a, a.Current.HostPort) // point the proxy back at the running release
 		}
 		discard(a, rel.Container)
 		return nil, err
@@ -175,72 +174,6 @@ func waitHealthy(container string, port int, path string, timeout time.Duration)
 		time.Sleep(time.Second)
 	}
 	return proto.Errf(proto.CodeHealth, hint, "app did not answer HTTP on %s within %s", path, timeout)
-}
-
-// route points the app's domain at hostPort, obtaining a certificate if needed.
-// TLS problems are warnings, not failures: the app stays reachable over http.
-func route(cfg *serverConfig, a *proto.App, hostPort int) ([]string, error) {
-	path := siteConfPath(cfg, a.Name)
-	var warnings []string
-	a.TLS = haveCert(a.Domain)
-	if !a.TLS {
-		progress("Configuring nginx for http://%s", a.Domain)
-		if err := applyNginx(path, renderSite(cfg, a.Name, a.Domain, hostPort, false)); err != nil {
-			return nil, err
-		}
-		if ok, why := dnsPointsHere(a.Domain, cfg.PublicIP); !ok {
-			warnings = append(warnings, fmt.Sprintf("no TLS: %s; add an A record %s → %s and redeploy", why, a.Domain, cfg.PublicIP))
-		} else {
-			progress("Requesting TLS certificate for %s", a.Domain)
-			if err := obtainCert(a.Domain); err != nil {
-				warnings = append(warnings, "no TLS: certbot failed: "+err.Error())
-			} else {
-				a.TLS, a.CertByShip = true, true
-			}
-		}
-	}
-	if a.TLS {
-		progress("Configuring nginx for https://%s", a.Domain)
-		if err := applyNginx(path, renderSite(cfg, a.Name, a.Domain, hostPort, true)); err != nil {
-			return nil, err
-		}
-	}
-	a.URL = "http://" + a.Domain
-	if a.TLS {
-		a.URL = "https://" + a.Domain
-	}
-	return warnings, nil
-}
-
-func dnsPointsHere(domain, ip string) (bool, string) {
-	if ip == "" {
-		return true, ""
-	}
-	addrs, err := net.LookupHost(domain)
-	if err != nil || len(addrs) == 0 {
-		return false, domain + " does not resolve"
-	}
-	if !slices.Contains(addrs, ip) {
-		return false, fmt.Sprintf("%s resolves to %s, not to this server", domain, strings.Join(addrs, ", "))
-	}
-	return true, ""
-}
-
-func obtainCert(domain string) error {
-	if err := os.MkdirAll(acmeWebroot, 0o755); err != nil {
-		return err
-	}
-	args := []string{"certonly", "--webroot", "-w", acmeWebroot, "-d", domain,
-		"--non-interactive", "--agree-tos", "--keep-until-expiring",
-		"--deploy-hook", "systemctl reload nginx"}
-	if entries, _ := os.ReadDir("/etc/letsencrypt/accounts"); len(entries) == 0 {
-		args = append(args, "--register-unsafely-without-email")
-	}
-	out, err := combined("certbot", args...)
-	if err != nil {
-		return errors.New(tail(out, 5))
-	}
-	return nil
 }
 
 func ensureEnvFile(app string) (string, error) {

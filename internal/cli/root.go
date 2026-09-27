@@ -40,7 +40,7 @@ func newRoot() *cobra.Command {
 		Short: "Deploy web apps to your own server over SSH",
 		Long: `ship deploys a web app from the current directory to your own server.
 
-  ship init root@1.2.3.4     one-time: remember the server (and install deps with --install)
+  ship init root@1.2.3.4     one-time: remember the server (--install sets up docker + caddy)
   ship                       build, upload and release the app in the current directory
 
 The app gets https://<name>.<ip>.sslip.io by default, or your --domain.
@@ -124,7 +124,9 @@ func initCmd() *cobra.Command {
 		Long: `Connects over SSH, installs the shipd helper, detects the nginx setup and
 remembers the server as default for future deploys. Safe to re-run.
 
-With --install, missing docker, nginx and certbot are installed (Debian/Ubuntu).
+With --install, missing docker and caddy are installed (Debian/Ubuntu).
+Caddy is the default reverse proxy (automatic HTTPS). If the server already
+runs nginx on :443, ship uses it instead (with certbot for certificates).
 With --base-domain apps.example.com (and a wildcard DNS record *.apps.example.com
 pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
 		Args: cobra.ExactArgs(1),
@@ -157,8 +159,10 @@ pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
 				}
 			}
 			emit(si, func() {
-				fmt.Printf("✓ %s is ready (%s, docker %s, %s)\n", server, si.Arch, si.Docker, si.Nginx)
-				fmt.Printf("  https via nginx on %s, configs in %s\n", strings.Join(si.SSLListen, ", "), si.NginxDir)
+				fmt.Printf("✓ %s is ready (%s, docker %s, %s %s)\n", server, si.Arch, si.Docker, si.Proxy, si.ProxyVersion)
+				if si.Proxy == "nginx" {
+					fmt.Printf("  nginx mode: https on %s, configs in %s\n", strings.Join(si.SSLListen, ", "), si.NginxDir)
+				}
 				if si.BaseDomain != "" {
 					fmt.Printf("  apps get <name>.%s\n", si.BaseDomain)
 				} else if si.PublicIP != "" {
@@ -173,7 +177,7 @@ pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
 		},
 	}
 	c.Flags().StringVar(&base, "base-domain", "", "wildcard base domain for apps, e.g. apps.example.com")
-	c.Flags().BoolVar(&install, "install", false, "install missing docker, nginx and certbot")
+	c.Flags().BoolVar(&install, "install", false, "install missing docker and caddy")
 	c.Flags().BoolVar(&noDefault, "no-default", false, "do not make this the default server")
 	return c
 }

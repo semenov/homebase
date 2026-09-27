@@ -4,15 +4,16 @@ Deploy web apps to your own server straight from the terminal. Built to be trivi
 people and for AI agents.
 
 ```sh
-ship init root@1.2.3.4        # once: remembers the server (--install sets up docker/nginx/certbot)
+ship init root@1.2.3.4        # once: remembers the server (--install sets up docker + caddy)
 cd my-app && ship             # → https://my-app.1-2-3-4.sslip.io
-ship --domain app.example.com # your own domain, TLS via Let's Encrypt
+ship --domain app.example.com # your own domain, automatic HTTPS
 ```
 
 - **Just SSH.** No registry, no control panel, no daemon. ship installs a tiny helper (`shipd`) and
   keeps it up to date by itself.
-- **Works with your nginx.** Configs go into `ship-<app>.conf`, every change passes `nginx -t` or
-  is rolled back. Existing setups (including an SNI `stream` router on :443) are detected.
+- **Caddy for HTTPS.** One small file per app, applied atomically with `caddy reload`; certificates
+  are issued once and renewed automatically. Servers that already run nginx are supported too
+  (configs validated with `nginx -t`, certificates via certbot).
 - **Zero-downtime releases.** The new container has to answer HTTP before traffic switches;
   a broken release never replaces a working one. `ship rollback` switches back instantly.
 - **No Dockerfile needed** for Node, Python (Django/FastAPI/Flask), Go and static sites.

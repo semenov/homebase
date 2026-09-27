@@ -103,14 +103,13 @@ type DeployResult struct {
 }
 
 type ServerInfo struct {
-	Arch       string   `json:"arch"`
-	PublicIP   string   `json:"public_ip"`
-	BaseDomain string   `json:"base_domain,omitempty"`
-	NginxDir   string   `json:"nginx_dir"`
-	SSLListen  []string `json:"ssl_listen"`
-	HTTPListen []string `json:"http_listen"`
-	Docker     string   `json:"docker"`
-	Nginx      string   `json:"nginx"`
-	Certbot    bool     `json:"certbot"`
-	Apps       int      `json:"apps"`
+	Arch         string   `json:"arch"`
+	PublicIP     string   `json:"public_ip"`
+	BaseDomain   string   `json:"base_domain,omitempty"`
+	Proxy        string   `json:"proxy"` // caddy | nginx
+	ProxyVersion string   `json:"proxy_version"`
+	NginxDir     string   `json:"nginx_dir,omitempty"`
+	SSLListen    []string `json:"ssl_listen,omitempty"`
+	Docker       string   `json:"docker"`
+	Apps         int      `json:"apps"`
 }

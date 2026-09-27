@@ -272,14 +272,10 @@ func cmdDestroy(args []string) (any, error) {
 		combined("docker", append([]string{"rm", "-f"}, strings.Fields(ids)...)...)
 	}
 	if cfg, err := readServerConfig(); err == nil {
-		progress("Removing nginx config")
-		if err := removeNginx(siteConfPath(cfg, a.Name)); err != nil {
+		progress("Removing %s route", cfg.proxy())
+		if err := unroute(cfg, a); err != nil {
 			return nil, err
 		}
-	}
-	if a.CertByShip {
-		progress("Deleting certificate for %s", a.Domain)
-		combined("certbot", "delete", "--cert-name", a.Domain, "--non-interactive")
 	}
 	progress("Removing images")
 	if imgs, _ := output("docker", "images", "ship/"+a.Name, "--format", "{{.Repository}}:{{.Tag}}"); strings.TrimSpace(imgs) != "" {

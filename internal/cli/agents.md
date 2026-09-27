@@ -1,13 +1,13 @@
 # ship: deploy web apps to your own server
 
 ship builds a Docker image from a project directory, uploads it to a server over
-SSH and releases it behind the server's nginx with HTTPS (Let's Encrypt).
+SSH and releases it behind Caddy (or an existing nginx) with automatic HTTPS.
 Releases are zero-downtime: the new container must answer HTTP before traffic
 switches, otherwise the old one keeps serving and the deploy fails with logs.
 
 ## Quick start
 
-    ship init root@1.2.3.4          # once per server; add --install on a fresh Ubuntu/Debian box
+    ship init root@1.2.3.4          # once per server; --install sets up docker + caddy on Ubuntu/Debian
     cd my-app && ship               # deploy; prints the URL
 
 The first deploy writes `ship.toml` (name + server). Commit it; later deploys are just `ship`.
@@ -72,8 +72,7 @@ Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `.env*` are excluded
   `{"ok":true,"data":{...}}` or `{"ok":false,"error":{"code","message","hint","logs"}}`.
   Progress goes to stderr and can be ignored.
 - Deploy result: `data.url`, `data.tls`, `data.release.id`, `data.warnings[]`
-  (e.g. TLS could not be obtained because DNS does not point at the server; the app is still
-  served over http).
+  (e.g. the TLS certificate is not issued yet because DNS does not point at the server).
 - Error codes and exit codes:
   `usage`(2) `confirmation_required`(2) `config`(3) `stack_not_detected`(3) `server_not_ready`(3)
   `build_failed`(4) `upload_failed`(4) `container_failed`(5) `health_check_failed`(5)
@@ -88,7 +87,13 @@ Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `.env*` are excluded
 ## Server side
 
 ship installs `/usr/local/bin/shipd` and keeps state in `/var/lib/ship`. Containers are named
-`ship-<app>-<release>`, bound to 127.0.0.1:20000-29999. nginx configs are written as
-`ship-<app>.conf` in sites-enabled (or conf.d); every change is checked with `nginx -t` and
-reverted if invalid, so other sites on the server are never affected. Existing nginx setups
-(including an SNI `stream` router on :443) are detected automatically.
+`ship-<app>-<release>`, bound to 127.0.0.1:20000-29999.
+
+Reverse proxy: Caddy by default. Each app is one file, `/etc/caddy/ship/<app>.caddy`, imported
+from `/etc/caddy/Caddyfile`; changes are applied with `caddy reload`, which is atomic and keeps
+the old config if the new one is rejected. Caddy obtains and renews certificates itself and keeps
+them across reloads and redeploys, so a redeploy never requests a new certificate.
+
+If the server already runs nginx on :443, ship uses it instead: `ship-<app>.conf` in
+sites-enabled (or conf.d), validated with `nginx -t` and reverted if invalid, certificates via
+certbot. An SNI `stream` router on :443 is detected automatically.
