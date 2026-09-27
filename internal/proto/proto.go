@@ -138,7 +138,8 @@ type ServerInfo struct {
 	Arch         string   `json:"arch"`
 	PublicIP     string   `json:"public_ip"`
 	BaseDomain   string   `json:"base_domain,omitempty"`
-	Proxy        string   `json:"proxy"` // caddy | nginx
+	WildcardDNS  string   `json:"wildcard_dns,omitempty"` // set when *.base_domain has one shared certificate
+	Proxy        string   `json:"proxy"`                  // caddy | nginx
 	ProxyVersion string   `json:"proxy_version"`
 	NginxDir     string   `json:"nginx_dir,omitempty"`
 	SSLListen    []string `json:"ssl_listen,omitempty"`

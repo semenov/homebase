@@ -40,6 +40,7 @@ The first deploy writes `ship.toml` (name + server). Commit it; later deploys ar
     ship destroy --yes              remove containers, images, route; KEEPS volumes, database, env
     ship destroy --data --yes       also delete volumes and the database (final backup is kept)
     ship init user@host [--install] [--base-domain apps.example.com] [--no-default]
+                    [--wildcard cloudflare --dns-token-file FILE]   one *.base-domain certificate
     ship agents install|uninstall|status   tell coding agents on this machine to deploy with ship
 
 Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.
@@ -133,6 +134,9 @@ Reverse proxy: Caddy by default. Each app is one file, `/etc/caddy/ship/<app>.ca
 from `/etc/caddy/Caddyfile`; changes are applied with `caddy reload`, which is atomic and keeps
 the old config if the new one is rejected. Caddy obtains and renews certificates itself and keeps
 them across reloads and redeploys, so a redeploy never requests a new certificate.
+With `ship init --wildcard cloudflare` Caddy holds one `*.<base-domain>` certificate (DNS
+challenge; token in /etc/caddy/dns.env, 0600) and new apps under the base domain get HTTPS
+instantly without any certificate request, so Let's Encrypt rate limits never apply.
 
 If the server already runs nginx on :443, ship uses it instead: `ship-<app>.conf` in
 sites-enabled (or conf.d), validated with `nginx -t` and reverted if invalid, certificates via

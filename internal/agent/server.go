@@ -18,6 +18,8 @@ type serverConfig struct {
 	Proxy      string `json:"proxy"` // caddy | nginx ("" in old configs means nginx)
 	PublicIP   string `json:"public_ip"`
 	BaseDomain string `json:"base_domain,omitempty"`
+	// WildcardDNS is the DNS provider used for the *.BaseDomain certificate ("" = per-app certificates)
+	WildcardDNS string `json:"wildcard_dns,omitempty"`
 	// nginx only
 	NginxDir   string   `json:"nginx_dir,omitempty"`
 	SSLListen  []string `json:"ssl_listen,omitempty"`
@@ -45,6 +47,7 @@ func cmdSetup(args []string) (any, error) {
 	ip := fs.String("ip", "", "public IP of the server")
 	base := fs.String("base-domain", "", "wildcard domain for apps, e.g. apps.example.com")
 	install := fs.Bool("install", false, "install missing docker and caddy")
+	wildcard := fs.String("wildcard", "", "DNS provider for a *.base-domain certificate (token on stdin)")
 	if err := parse(fs, args); err != nil {
 		return nil, err
 	}
@@ -62,11 +65,19 @@ func cmdSetup(args []string) (any, error) {
 	if cfg.BaseDomain == "" && old != nil {
 		cfg.BaseDomain = old.BaseDomain
 	}
+	if old != nil && old.BaseDomain == cfg.BaseDomain {
+		cfg.WildcardDNS = old.WildcardDNS
+	}
 	if err := prepareProxy(cfg); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, err
+	}
+	if *wildcard != "" {
+		if err := setupWildcard(cfg, *wildcard, os.Stdin); err != nil {
+			return nil, err
+		}
 	}
 	if err := writeJSON(serverFile, cfg); err != nil {
 		return nil, err
@@ -96,6 +107,7 @@ func serverInfo(cfg *serverConfig) *proto.ServerInfo {
 		Arch:         runtime.GOARCH,
 		PublicIP:     cfg.PublicIP,
 		BaseDomain:   cfg.BaseDomain,
+		WildcardDNS:  cfg.WildcardDNS,
 		Proxy:        cfg.proxy(),
 		ProxyVersion: strings.TrimSpace(string(version)),
 		NginxDir:     cfg.NginxDir,

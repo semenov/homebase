@@ -12,7 +12,8 @@ ship --domain app.example.com # your own domain, automatic HTTPS
 - **Just SSH.** No registry, no control panel, no daemon. ship installs a tiny helper (`shipd`) and
   keeps it up to date by itself.
 - **Caddy for HTTPS.** One small file per app, applied atomically with `caddy reload`; certificates
-  are issued once and renewed automatically. Servers that already run nginx are supported too
+  are issued once and renewed automatically. With `ship init --wildcard cloudflare` a single
+  `*.your-domain` certificate covers every app: instant HTTPS, no rate limits. Servers that already run nginx are supported too
   (configs validated with `nginx -t`, certificates via certbot).
 - **Zero-downtime releases.** The new container has to answer HTTP before traffic switches;
   a broken release never replaces a working one. `ship rollback` switches back instantly.

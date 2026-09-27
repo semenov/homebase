@@ -5,7 +5,9 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,6 +97,30 @@ func addDeployFlags(c *cobra.Command, d *deployOpts) {
 	f.DurationVar(&d.timeout, "timeout", 90*time.Second, "how long to wait for the app to become healthy")
 }
 
+// dnsToken reads the DNS API token from a file or $CLOUDFLARE_API_TOKEN.
+func dnsToken(file string) (string, error) {
+	if file != "" {
+		if strings.HasPrefix(file, "~/") {
+			home, _ := os.UserHomeDir()
+			file = filepath.Join(home, file[2:])
+		}
+		b, err := os.ReadFile(file)
+		if err != nil {
+			return "", proto.Errf(proto.CodeConfig, "", "cannot read token file: %v", err)
+		}
+		line, _, _ := strings.Cut(strings.TrimSpace(string(b)), "\n")
+		// accept both a bare token and KEY=token
+		if _, v, ok := strings.Cut(line, "="); ok && !strings.ContainsAny(line[:strings.Index(line, "=")], " ") {
+			line = v
+		}
+		return strings.Trim(strings.TrimSpace(line), `"'`), nil
+	}
+	if t := os.Getenv("CLOUDFLARE_API_TOKEN"); t != "" {
+		return t, nil
+	}
+	return "", proto.Errf(proto.CodeConfig, "pass --dns-token-file or set CLOUDFLARE_API_TOKEN", "--wildcard needs a DNS API token")
+}
+
 func resolveServer(p *Project) (string, error) {
 	s := firstNonEmpty(flagServer, p.Server, os.Getenv("SHIP_SERVER"), loadGlobal().DefaultServer)
 	if s == "" {
@@ -122,7 +148,7 @@ func target() (*Remote, string, error) {
 }
 
 func initCmd() *cobra.Command {
-	var base string
+	var base, wildcard, tokenFile string
 	var install, noDefault bool
 	c := &cobra.Command{
 		Use:   "init user@host",
@@ -134,7 +160,11 @@ With --install, missing docker and caddy are installed (Debian/Ubuntu).
 Caddy is the default reverse proxy (automatic HTTPS). If the server already
 runs nginx on :443, ship uses it instead (with certbot for certificates).
 With --base-domain apps.example.com (and a wildcard DNS record *.apps.example.com
-pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
+pointing at the server), apps get <name>.apps.example.com instead of sslip.io.
+
+With --wildcard cloudflare, Caddy gets one certificate for *.apps.example.com via
+a DNS challenge, so new apps have HTTPS instantly and never hit Let's Encrypt
+rate limits. The API token needs DNS edit permission on the zone.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			server := args[0]
@@ -153,8 +183,17 @@ pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
 			if install {
 				a = append(a, "--install")
 			}
+			var stdin io.Reader
+			if wildcard != "" {
+				token, err := dnsToken(tokenFile)
+				if err != nil {
+					return err
+				}
+				a = append(a, "--wildcard", wildcard)
+				stdin = strings.NewReader(token + "\n")
+			}
 			var si proto.ServerInfo
-			if err := r.Agent(nil, &si, a...); err != nil {
+			if err := r.Agent(stdin, &si, a...); err != nil {
 				return err
 			}
 			g := loadGlobal()
@@ -169,7 +208,9 @@ pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
 				if si.Proxy == "nginx" {
 					fmt.Printf("  nginx mode: https on %s, configs in %s\n", strings.Join(si.SSLListen, ", "), si.NginxDir)
 				}
-				if si.BaseDomain != "" {
+				if si.BaseDomain != "" && si.WildcardDNS != "" {
+					fmt.Printf("  apps get <name>.%s, all covered by one wildcard certificate (instant HTTPS)\n", si.BaseDomain)
+				} else if si.BaseDomain != "" {
 					fmt.Printf("  apps get <name>.%s\n", si.BaseDomain)
 				} else if si.PublicIP != "" {
 					fmt.Printf("  apps get <name>.%s.sslip.io (use --base-domain for your own wildcard domain)\n", strings.ReplaceAll(si.PublicIP, ".", "-"))
@@ -187,6 +228,8 @@ pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
 	}
 	c.Flags().StringVar(&base, "base-domain", "", "wildcard base domain for apps, e.g. apps.example.com")
 	c.Flags().BoolVar(&install, "install", false, "install missing docker and caddy")
+	c.Flags().StringVar(&wildcard, "wildcard", "", "get one *.base-domain certificate via DNS (provider: cloudflare) instead of one per app")
+	c.Flags().StringVar(&tokenFile, "dns-token-file", "", "file with the DNS provider API token (default: $CLOUDFLARE_API_TOKEN)")
 	c.Flags().BoolVar(&noDefault, "no-default", false, "do not make this the default server")
 	return c
 }
