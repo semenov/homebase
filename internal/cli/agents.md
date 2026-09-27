@@ -60,10 +60,13 @@ Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.
 - `requirements.txt`/`pyproject.toml`: python:3.12. Detects Django (gunicorn), FastAPI (uvicorn),
   Flask (gunicorn), else `python main.py|app.py`. Port 8000.
 - `go.mod`: builds `.` or the single `./cmd/*` package. Port 8080.
+- `Cargo.toml`: Rust. Builds the package binary (or its only `[[bin]]`) with `cargo build
+  --release` in rust:1-bookworm and runs it on debian:bookworm-slim (with ca-certificates and
+  libssl3). Dependencies are cached in their own layer. Workspaces need a Dockerfile. Port 8080.
 - `index.html`: served as a static site by nginx. Port 80.
 
 The container always gets `PORT=<port>`; the app must listen on `0.0.0.0:$PORT`.
-Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `.env*` are excluded.
+Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `target`, `.env*` are excluded.
 
 ## Data: files and databases
 

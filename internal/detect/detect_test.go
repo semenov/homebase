@@ -81,3 +81,41 @@ func TestStartOverride(t *testing.T) {
 		t.Fatal(p.Generated)
 	}
 }
+
+func TestRust(t *testing.T) {
+	p, err := Detect(project(t, map[string]string{
+		"Cargo.toml": "[package]\nname = \"api\"\nversion = \"0.1.0\"\n", "src/main.rs": "fn main() {}",
+	}), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"rust:1-bookworm", "cargo build --release && rm -rf src", "--bin api", "target/release/api /usr/local/bin/app", "libssl3"} {
+		if !strings.Contains(p.Generated, want) {
+			t.Errorf("missing %q:\n%s", want, p.Generated)
+		}
+	}
+	if p.Stack != "rust" || p.Port != 8080 {
+		t.Errorf("got %s:%d", p.Stack, p.Port)
+	}
+
+	// custom bin path and build.rs: no dependency-caching stubs
+	p, err = Detect(project(t, map[string]string{
+		"Cargo.toml": "[package]\nname = \"x\"\n\n[[bin]]\nname = \"server\"\npath = \"bin/server.rs\"\n", "bin/server.rs": "", "build.rs": "",
+	}), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(p.Generated, "rm -rf src") || !strings.Contains(p.Generated, "--bin server") {
+		t.Errorf("unexpected:\n%s", p.Generated)
+	}
+
+	for name, files := range map[string]map[string]string{
+		"workspace": {"Cargo.toml": "[workspace]\nmembers = [\"a\"]\n"},
+		"lib only":  {"Cargo.toml": "[package]\nname = \"x\"\n", "src/lib.rs": ""},
+		"many bins": {"Cargo.toml": "[package]\nname = \"x\"\n[[bin]]\nname = \"a\"\n[[bin]]\nname = \"b\"\n"},
+	} {
+		if _, err := Detect(project(t, files), "", ""); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}

@@ -29,6 +29,10 @@ func cmdBuild(args []string) (any, error) {
 	if err := cmd.Run(); err != nil {
 		return nil, proto.Errf(proto.CodeBuild, "see the build output above", "docker build failed: %v", err)
 	}
+	// builds on the server leave intermediate images and cache behind; keep the
+	// last week's cache so rebuilds stay fast, drop the rest
+	combined("docker", "image", "prune", "-f")
+	combined("docker", "builder", "prune", "-f", "--filter", "until=168h")
 	return map[string]string{"image": *tag}, nil
 }
 

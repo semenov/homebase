@@ -26,7 +26,7 @@ take the site down, and you don't want to learn Kubernetes or run a PaaS for it.
 
 - **Just SSH.** ship talks to your server over your normal `ssh`. It installs a small helper
   (`shipd`) there and keeps it up to date. Nothing listens on extra ports.
-- **No Dockerfile needed.** Node, Python (Django, FastAPI, Flask), Go and static sites are
+- **No Dockerfile needed.** Node, Python (Django, FastAPI, Flask), Go, Rust and static sites are
   detected; if you have a Dockerfile, it is used as is.
 - **HTTPS automatically.** [Caddy](https://caddyserver.com) gets and renews certificates. Without
   a domain you get a working `https://<app>.<ip>.sslip.io` address right away.

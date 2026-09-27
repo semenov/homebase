@@ -23,7 +23,7 @@ type Plan struct {
 }
 
 // DefaultIgnore is used for generated Dockerfiles when the project has no .dockerignore.
-const DefaultIgnore = ".git\nnode_modules\n.venv\nvenv\n__pycache__\n*.pyc\n.env\n.env.*\n.DS_Store\nship.toml\n"
+const DefaultIgnore = ".git\nnode_modules\n.venv\nvenv\n__pycache__\n*.pyc\ntarget\n.env\n.env.*\n.DS_Store\nship.toml\n"
 
 var exposeRe = regexp.MustCompile(`(?mi)^\s*EXPOSE\s+(\d+)`)
 
@@ -50,11 +50,13 @@ func Detect(dir, dockerfile, start string) (*Plan, error) {
 		return python(dir, start)
 	case exists(dir, "go.mod"):
 		return golang(dir, start)
+	case exists(dir, "Cargo.toml"):
+		return rust(dir, start)
 	case exists(dir, "index.html"):
 		return &Plan{Stack: "static", Port: 80, Generated: "FROM nginx:alpine\nCOPY . /usr/share/nginx/html\nEXPOSE 80\n"}, nil
 	}
 	return nil, proto.Errf(proto.CodeStackUnknown,
-		"add a Dockerfile, or make sure the project root has package.json, requirements.txt/pyproject.toml, go.mod or index.html",
+		"add a Dockerfile, or make sure the project root has package.json, requirements.txt/pyproject.toml, go.mod, Cargo.toml or index.html",
 		"could not detect how to build %s", dir)
 }
 
