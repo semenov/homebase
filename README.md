@@ -49,8 +49,8 @@ brew install semenov/tap/ship
 
 ```sh
 arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-curl -fsSL https://github.com/semenov/ship/releases/download/v0.1.0/ship_0.1.0_linux_${arch}.tar.gz \
-  | tar -xz -C /usr/local/bin ship
+curl -fsSL https://github.com/semenov/ship/releases/latest/download/ship_linux_${arch}.tar.gz \
+  | sudo tar -xz -C /usr/local/bin ship
 ```
 
 **From source** (Go 1.23+ and make):

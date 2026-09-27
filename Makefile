@@ -27,10 +27,10 @@ PLATFORMS = darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 release: agent
 	rm -rf dist/release && mkdir -p dist/release
 	for p in $(PLATFORMS); do \
-		os=$${p%/*}; arch=$${p#*/}; dir=dist/release/ship_$(VERSION)_$${os}_$${arch}; \
+		os=$${p%/*}; arch=$${p#*/}; dir=dist/release/ship_$${os}_$${arch}; \
 		mkdir -p $$dir && \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags="$(LDFLAGS)" -o $$dir/ship ./cmd/ship && \
 		cp LICENSE README.md $$dir/ && \
-		tar -czf $$dir.tar.gz -C $$dir . && rm -rf $$dir || exit 1; \
+		tar -czf $$dir.tar.gz -C $$dir ship LICENSE README.md && rm -rf $$dir || exit 1; \
 	done
 	cd dist/release && shasum -a 256 *.tar.gz > checksums.txt
