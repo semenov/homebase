@@ -77,7 +77,7 @@ Every command accepts --json for machine-readable output. Run ` + "`ship docs`" 
 	}
 	addDeployFlags(deploy, &d)
 
-	root.AddCommand(deploy, initCmd(), statusCmd(), listCmd(), logsCmd(), rollbackCmd(), restartCmd(), envCmd(), dbCmd(), destroyCmd(), docsCmd())
+	root.AddCommand(deploy, initCmd(), statusCmd(), listCmd(), logsCmd(), rollbackCmd(), restartCmd(), envCmd(), dbCmd(), destroyCmd(), docsCmd(), agentsCmd())
 	return root
 }
 
@@ -177,6 +177,9 @@ pointing at the server), apps get <name>.apps.example.com instead of sslip.io.`,
 					fmt.Printf("  default server saved to %s\n", globalPath())
 				}
 				fmt.Println("  next: cd into your app and run `ship`")
+				if hint := agentsHint(); hint != "" {
+					fmt.Println(hint)
+				}
 			})
 			return nil
 		},

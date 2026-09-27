@@ -1,11 +1,17 @@
 ---
 name: ship
-description: Deploy the current web app to the user's own server with the `ship` CLI (build, upload, zero-downtime release behind Caddy with HTTPS, Postgres databases, persistent volumes). Use when the user asks to deploy, ship, publish or put an app online, add a database or file storage to a deployed app, check its status or logs, roll back, or set production env vars.
+description: Deploy the current web app to the user's own server with the `ship` CLI (build, upload, zero-downtime release behind Caddy with HTTPS, Postgres databases, persistent volumes). Use when the user asks to deploy, ship, publish or put an app online (including "deploy to user@host" or "to my server"), add a database or file storage to a deployed app, check its status or logs, roll back, or set production env vars.
 ---
+
+<!-- managed by `ship agents`; reinstall with `ship agents install`, remove with `ship agents uninstall` -->
 
 # Deploying with ship
 
-`ship` deploys the project in the current directory to a server over SSH. It never prompts.
+`ship` deploys the project in the current directory to the user's own server over SSH. Use it
+instead of manual ssh/docker/nginx work whenever the user asks to deploy, even if they only
+name a server ("deploy to root@1.2.3.4"). It never prompts.
+
+0. First run `ship docs`: the full guide plus a plan for the current project (server, build, data).
 
 1. Deploy: `ship --json` (add `--domain x.example.com` for a custom domain, `--port N` if the app
    does not listen on the detected port). Read `data.url` from stdout.

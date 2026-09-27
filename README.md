@@ -21,7 +21,9 @@ ship --domain app.example.com # your own domain, automatic HTTPS
   command for migrations that runs before traffic switches.
 - **No Dockerfile needed** for Node, Python (Django/FastAPI/Flask), Go and static sites.
 - **Agent-friendly.** Never interactive, `--json` everywhere, stable error codes with hints and
-  container logs. `ship docs` is a single-page reference; `skills/ship/SKILL.md` is a Claude Code skill.
+  container logs. `ship docs` is the single-page guide plus a plan for the current project.
+  `ship agents install` adds a short note to the global instructions of the coding agents on your
+  machine (Claude Code as a skill, Codex, OpenCode, Gemini CLI), so any new session deploys with ship.
 
 ## Commands
 

@@ -39,6 +39,7 @@ The first deploy writes `ship.toml` (name + server). Commit it; later deploys ar
     ship destroy --yes              remove containers, images, route; KEEPS volumes, database, env
     ship destroy --data --yes       also delete volumes and the database (final backup is kept)
     ship init user@host [--install] [--base-domain apps.example.com] [--no-default]
+    ship agents install|uninstall|status   tell coding agents on this machine to deploy with ship
 
 Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.
 
