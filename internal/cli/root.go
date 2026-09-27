@@ -3,6 +3,7 @@ package cli
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/vsemenov/ship/internal/detect"
 	"github.com/vsemenov/ship/internal/proto"
 )
 
@@ -39,6 +41,7 @@ func newRoot() *cobra.Command {
 		Use:   "ship [dir]",
 		Short: "Deploy web apps to your own server over SSH",
 		Long: `ship deploys a web app from the current directory to your own server.
+AI agents: run ` + "`ship docs`" + ` first; it explains everything and summarizes this project.
 
   ship init root@1.2.3.4     one-time: remember the server (--install sets up docker + caddy)
   ship                       build, upload and release the app in the current directory
@@ -446,10 +449,67 @@ backup in /var/lib/ship/backups/<app>/ first).`,
 func docsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "docs",
-		Short: "Print the full guide (written for both humans and AI agents)",
+		Short: "Print the full guide plus a summary of the current project (start here, AI agents)",
 		Args:  cobra.NoArgs,
-		Run:   func(cmd *cobra.Command, args []string) { fmt.Print(agentDocs) },
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Print(agentDocs)
+			fmt.Print(projectSummary())
+		},
 	}
+}
+
+// projectSummary describes what ship would do in the current directory, so an
+// agent gets a concrete plan without running anything. It never touches the network.
+func projectSummary() string {
+	dir, _ := os.Getwd()
+	var b strings.Builder
+	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
+	w("\n## This project (%s)\n", dir)
+	proj, found, err := loadProject(dir)
+	if err != nil {
+		w("- ship.toml is invalid: %v", err)
+		return b.String()
+	}
+	if found {
+		w("- ship.toml: present (already deployed with ship before, or configured by hand)")
+	} else {
+		w("- ship.toml: none yet; the first `ship` writes it")
+	}
+	w("- app name: %s", firstNonEmpty(flagApp, proj.Name, appNameFrom(dir)))
+	if server, err := resolveServer(proj); err == nil {
+		w("- server: %s", server)
+	} else {
+		w("- server: NOT CONFIGURED; ask the user for one, then `ship init user@host`")
+	}
+	if plan, err := detect.Detect(dir, proj.Dockerfile, proj.Start); err != nil {
+		var pe *proto.Error
+		if errors.As(err, &pe) {
+			w("- build: cannot detect (%s); %s", pe.Message, pe.Hint)
+		}
+	} else {
+		how := "generated Dockerfile"
+		if plan.Dockerfile != "" {
+			how = plan.Dockerfile
+		}
+		port := plan.Port
+		if proj.Port > 0 {
+			port = proj.Port
+		}
+		w("- build: %s via %s; the app must listen on 0.0.0.0:$PORT (PORT=%d)", plan.Stack, how, port)
+	}
+	if proj.Domain != "" {
+		w("- domain: %s", proj.Domain)
+	}
+	if len(proj.Volumes) > 0 {
+		w("- persistent paths: %s (DATA_DIR=%s)", strings.Join(proj.Volumes, ", "), proj.Volumes[0])
+	} else {
+		w("- persistent paths: none; add `volumes = [\"/data\"]` to ship.toml if the app writes files or uses SQLite")
+	}
+	if proj.Release != "" {
+		w("- release command: %s", proj.Release)
+	}
+	w("\nNext: `ship --json` to deploy, then `ship status --json`. If the app needs Postgres, run `ship db add` first.")
+	return b.String()
 }
 
 func ago(t time.Time) string {
