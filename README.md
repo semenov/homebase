@@ -39,13 +39,21 @@ take the site down, and you don't want to learn Kubernetes or run a PaaS for it.
 
 ## Install
 
-With [Homebrew](https://brew.sh) (macOS and Linux):
+**macOS** with [Homebrew](https://brew.sh):
 
 ```sh
 brew install semenov/tap/ship
 ```
 
-Or build from source (needs Go 1.23+ and make):
+**Linux** (amd64 or arm64), from the [latest release](https://github.com/semenov/ship/releases/latest):
+
+```sh
+arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -fsSL https://github.com/semenov/ship/releases/download/v0.1.0/ship_0.1.0_linux_${arch}.tar.gz \
+  | tar -xz -C /usr/local/bin ship
+```
+
+**From source** (Go 1.23+ and make):
 
 ```sh
 git clone https://github.com/semenov/ship.git
@@ -236,6 +244,7 @@ gets certificates with certbot.
 ```sh
 make          # builds the linux shipd helpers, embeds them and builds dist/ship
 make test
+make release VERSION=x.y.z   # archives for all platforms in dist/release
 ```
 
 - `cmd/ship`, `internal/cli`: the client
