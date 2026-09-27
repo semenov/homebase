@@ -20,10 +20,40 @@ type Plan struct {
 	Dockerfile string
 	Generated  string
 	Port       int
+	// Ignore holds .dockerignore rules used when the project has no .dockerignore.
+	Ignore string
 }
 
 // DefaultIgnore is used for generated Dockerfiles when the project has no .dockerignore.
 const DefaultIgnore = ".git\nnode_modules\n.venv\nvenv\n__pycache__\n*.pyc\ntarget\n.env\n.env.*\n.DS_Store\nship.toml\n"
+
+// StaticIgnore is stricter: everything in the image of a plain static site is
+// published, so hidden files and folders (agent and editor settings, .env, .git)
+// and project files that are not part of the site stay out.
+const StaticIgnore = ".*\n**/.*\n!.well-known\n!.well-known/**\nnode_modules\n*.md\nship.toml\nDockerfile*\n"
+
+// staticNginx configures nginx for static sites: gzip, and hidden files are
+// never served even if they end up in the image. spa serves index.html for
+// unknown paths (client-side routing).
+func staticNginx(spa bool) string {
+	fallback := "=404"
+	if spa {
+		fallback = "/index.html"
+	}
+	conf := `server {
+  listen 80;
+  root /usr/share/nginx/html;
+  index index.html;
+  gzip on;
+  gzip_proxied any;
+  gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+  location ~ /\.(?!well-known/) { return 404; }
+  location / { try_files $uri $uri/ ` + fallback + `; }
+}
+`
+	// printf expands the \n escapes; the config contains no % or ' characters
+	return "RUN printf '" + strings.ReplaceAll(conf, "\n", "\\n") + "' > /etc/nginx/conf.d/default.conf\n"
+}
 
 var exposeRe = regexp.MustCompile(`(?mi)^\s*EXPOSE\s+(\d+)`)
 
@@ -37,12 +67,20 @@ func Detect(dir, dockerfile, start string) (*Plan, error) {
 		if err != nil {
 			return nil, proto.Errf(proto.CodeConfig, "", "cannot read %s: %v", dockerfile, err)
 		}
-		p := &Plan{Stack: "dockerfile", Dockerfile: dockerfile, Port: 8080}
+		p := &Plan{Stack: "dockerfile", Dockerfile: dockerfile, Port: 8080, Ignore: DefaultIgnore}
 		if m := exposeRe.FindSubmatch(b); m != nil {
 			p.Port, _ = strconv.Atoi(string(m[1]))
 		}
 		return p, nil
 	}
+	p, err := detectStack(dir, start)
+	if err == nil && p.Ignore == "" {
+		p.Ignore = DefaultIgnore
+	}
+	return p, err
+}
+
+func detectStack(dir, start string) (*Plan, error) {
 	switch {
 	case exists(dir, "package.json"):
 		return node(dir, start)
@@ -53,7 +91,8 @@ func Detect(dir, dockerfile, start string) (*Plan, error) {
 	case exists(dir, "Cargo.toml"):
 		return rust(dir, start)
 	case exists(dir, "index.html"):
-		return &Plan{Stack: "static", Port: 80, Generated: "FROM nginx:alpine\nCOPY . /usr/share/nginx/html\nEXPOSE 80\n"}, nil
+		return &Plan{Stack: "static", Port: 80, Ignore: StaticIgnore,
+			Generated: "FROM nginx:alpine\n" + staticNginx(false) + "COPY . /usr/share/nginx/html\nEXPOSE 80\n"}, nil
 	}
 	return nil, proto.Errf(proto.CodeStackUnknown,
 		"add a Dockerfile, or make sure the project root has package.json, requirements.txt/pyproject.toml, go.mod, Cargo.toml or index.html",
@@ -129,9 +168,8 @@ func node(dir, start string) (*Plan, error) {
 		if pkg.has("react-scripts") {
 			out = "build"
 		}
-		return &Plan{Stack: "node-static", Port: 80, Generated: head + "\nFROM nginx:alpine\nCOPY --from=build /app/" + out + " /usr/share/nginx/html\n" +
-			`RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  location / { try_files $uri $uri/ /index.html; }\n}\n' > /etc/nginx/conf.d/default.conf` +
-			"\nEXPOSE 80\n"}, nil
+		return &Plan{Stack: "node-static", Port: 80, Generated: head + "\nFROM nginx:alpine\n" + staticNginx(true) +
+			"COPY --from=build /app/" + out + " /usr/share/nginx/html\nEXPOSE 80\n"}, nil
 	}
 	if start == "" {
 		return nil, proto.Errf(proto.CodeStackUnknown, `add a "start" script to package.json or set start = "..." in ship.toml`, "cannot find how to start the node app")

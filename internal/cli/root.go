@@ -83,7 +83,7 @@ Every command accepts --json for machine-readable output. Run ` + "`ship docs`" 
 	}
 	addDeployFlags(deploy, &d)
 
-	root.AddCommand(deploy, initCmd(), statusCmd(), listCmd(), logsCmd(), rollbackCmd(), restartCmd(), envCmd(), dbCmd(), destroyCmd(), docsCmd(), agentsCmd())
+	root.AddCommand(deploy, initCmd(), statusCmd(), listCmd(), logsCmd(), rollbackCmd(), restartCmd(), envCmd(), dbCmd(), destroyCmd(), docsCmd(), agentsCmd(), ejectCmd())
 	return root
 }
 
@@ -576,6 +576,19 @@ func projectSummary() string {
 			port = proj.Port
 		}
 		w("- build: %s via %s; the app must listen on 0.0.0.0:$PORT (PORT=%d)", plan.Stack, how, port)
+		if ci, err := inspectContext(dir, plan, proj.Build == "remote"); err == nil {
+			label := "image contents"
+			if plan.Stack == "static" {
+				label = "published files (everything in the image is public)"
+			}
+			w("- %s: %s", label, ci)
+			for _, warn := range ci.Warnings {
+				w("- WARNING: %s", warn)
+			}
+		}
+		if plan.Generated != "" {
+			w("- the Dockerfile is generated; `ship eject` writes it into the project to customize it")
+		}
 	}
 	if proj.Domain != "" {
 		w("- domain: %s", proj.Domain)

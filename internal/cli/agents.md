@@ -42,6 +42,7 @@ The first deploy writes `ship.toml` (name + server). Commit it; later deploys ar
     ship init user@host [--install] [--base-domain apps.example.com] [--no-default]
                     [--wildcard cloudflare --dns-token-file FILE]   one *.base-domain certificate
     ship agents install|uninstall|status   tell coding agents on this machine to deploy with ship
+    ship eject [--force]            write the generated Dockerfile + .dockerignore into the project
 
 Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.
 
@@ -63,10 +64,18 @@ Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.
 - `Cargo.toml`: Rust. Builds the package binary (or its only `[[bin]]`) with `cargo build
   --release` in rust:1-bookworm and runs it on debian:bookworm-slim (with ca-certificates and
   libssl3). Dependencies are cached in their own layer. Workspaces need a Dockerfile. Port 8080.
-- `index.html`: served as a static site by nginx. Port 80.
+- `index.html`: served as a static site by nginx (gzip on). Port 80. Everything in the image is
+  public, so hidden files and folders (`.claude`, `.env`, `.git`, ...), `*.md`, `ship.toml` and
+  `Dockerfile` are left out, and nginx refuses `/.anything` except `/.well-known`.
 
 The container always gets `PORT=<port>`; the app must listen on `0.0.0.0:$PORT`.
 Without a `.dockerignore`, `.git`, `node_modules`, `.venv`, `target`, `.env*` are excluded.
+Every deploy prints what goes into the image (`Image contents:` / `Published files:` with the
+excluded paths; `data.context` in --json) and warns if secrets or agent/editor folders would be
+included. `ship docs` shows the same for the current project before deploying.
+
+To customize the generated build, run `ship eject`: it writes the Dockerfile and .dockerignore into
+the project, and ship builds from them from then on.
 
 ## Data: files and databases
 

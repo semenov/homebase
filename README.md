@@ -27,7 +27,8 @@ take the site down, and you don't want to learn Kubernetes or run a PaaS for it.
 - **Just SSH.** ship talks to your server over your normal `ssh`. It installs a small helper
   (`shipd`) there and keeps it up to date. Nothing listens on extra ports.
 - **No Dockerfile needed.** Node, Python (Django, FastAPI, Flask), Go, Rust and static sites are
-  detected; if you have a Dockerfile, it is used as is.
+  detected; if you have a Dockerfile, it is used as is. Every deploy shows what goes into the
+  image, and `ship eject` writes the generated Dockerfile into your project when you want control.
 - **HTTPS automatically.** [Caddy](https://caddyserver.com) gets and renews certificates. Without
   a domain you get a working `https://<app>.<ip>.sslip.io` address right away.
 - **Zero-downtime deploys.** The new version must answer HTTP before traffic switches to it.
@@ -192,6 +193,7 @@ The app always gets `PORT` and must listen on `0.0.0.0:$PORT`.
 | `ship db add\|info\|shell\|backup\|restore` | Postgres database for the app |
 | `ship destroy --yes` | Remove the app; volumes and database are kept unless `--data` |
 | `ship agents install\|uninstall\|status` | Tell the coding agents on this machine about ship |
+| `ship eject` | Write the generated Dockerfile and .dockerignore into the project to customize them |
 | `ship docs` | The full guide, plus a summary of the current project |
 
 Global flags: `--json`, `-a/--app NAME`, `-s/--server user@host`.

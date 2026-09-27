@@ -13,9 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moby/patternmatcher"
-	"github.com/moby/patternmatcher/ignorefile"
-
 	"github.com/semenov/ship/internal/detect"
 	"github.com/semenov/ship/internal/proto"
 )
@@ -79,6 +76,18 @@ func runDeploy(o deployOpts) error {
 		info("Local docker is not running, building on the server instead")
 		remote = true
 	}
+	ctxInfo, err := inspectContext(dir, plan, remote)
+	if err != nil {
+		return err
+	}
+	what := "Image contents"
+	if strings.HasPrefix(plan.Stack, "static") {
+		what = "Published files"
+	}
+	step("%s: %s", what, ctxInfo)
+	for _, w := range ctxInfo.Warnings {
+		info("! %s", w)
+	}
 	if remote {
 		err = buildRemote(r, dir, plan, tag)
 	} else {
@@ -123,7 +132,12 @@ func runDeploy(o deployOpts) error {
 			saved = filepath.Join(dir, projectFile)
 		}
 	}
-	emit(res, func() {
+	res.Warnings = append(ctxInfo.Warnings, res.Warnings...)
+	out := struct {
+		proto.DeployResult
+		Context *ContextInfo `json:"context"`
+	}{res, ctxInfo}
+	emit(out, func() {
 		fmt.Printf("✓ %s is live at %s\n", res.App, res.URL)
 		fmt.Printf("  release %s · %s\n", res.Release.ID, res.Release.Image)
 		for _, w := range res.Warnings {
@@ -160,7 +174,7 @@ func generatedFiles(dir string, plan *detect.Plan) (string, func(), error) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".dockerignore")); err != nil {
 		// BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile
-		os.WriteFile(df+".dockerignore", []byte(detect.DefaultIgnore), 0o644)
+		os.WriteFile(df+".dockerignore", []byte(plan.Ignore), 0o644)
 	}
 	return df, cleanup, nil
 }
@@ -209,49 +223,27 @@ func buildRemote(r *Remote, dir string, plan *detect.Plan, tag string) error {
 		dockerfile = ".ship.Dockerfile"
 		extra = map[string][]byte{dockerfile: []byte(plan.Generated)}
 	}
-	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(writeContext(pw, dir, extra)) }()
-	return r.Agent(pr, nil, "build", "--tag", tag, "--dockerfile", dockerfile)
-}
-
-// writeContext writes dir as a gzipped tar, honoring .dockerignore.
-func writeContext(w io.Writer, dir string, extra map[string][]byte) error {
-	patterns := strings.Split(strings.TrimSpace(detect.DefaultIgnore), "\n")
-	if f, err := os.Open(filepath.Join(dir, ".dockerignore")); err == nil {
-		patterns, err = ignorefile.ReadAll(f)
-		f.Close()
-		if err != nil {
-			return err
-		}
-	}
-	pm, err := patternmatcher.New(patterns)
+	patterns, err := ignorePatterns(dir, plan, true)
 	if err != nil {
 		return err
 	}
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(writeContext(pw, dir, patterns, extra)) }()
+	return r.Agent(pr, nil, "build", "--tag", tag, "--dockerfile", dockerfile)
+}
+
+// writeContext writes dir as a gzipped tar, leaving out paths matched by patterns.
+func writeContext(w io.Writer, dir string, patterns []string, extra map[string][]byte) error {
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(dir, path)
-		if rel == "." {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if skip, _ := pm.MatchesOrParentMatches(rel); skip {
-			if d.IsDir() && !pm.Exclusions() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	err := walkContext(dir, patterns, func(rel string, d fs.DirEntry) error {
 		fi, err := d.Info()
 		if err != nil {
 			return err
 		}
 		link := ""
 		if fi.Mode()&fs.ModeSymlink != 0 {
-			link, _ = os.Readlink(path)
+			link, _ = os.Readlink(filepath.Join(dir, rel))
 		}
 		hdr, err := tar.FileInfoHeader(fi, link)
 		if err != nil {
@@ -262,7 +254,7 @@ func writeContext(w io.Writer, dir string, extra map[string][]byte) error {
 			return err
 		}
 		if fi.Mode().IsRegular() {
-			f, err := os.Open(path)
+			f, err := os.Open(filepath.Join(dir, rel))
 			if err != nil {
 				return err
 			}
@@ -271,7 +263,7 @@ func writeContext(w io.Writer, dir string, extra map[string][]byte) error {
 			return err
 		}
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		return err
 	}
