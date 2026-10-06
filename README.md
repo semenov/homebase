@@ -136,7 +136,10 @@ homebase tunnel status                # what is shared, and how
 ```
 
 `share` creates a DNS record `my-app.example.com` that points to the tunnel. It won't
-overwrite a record that already exists, so your real sites on the same domain are safe.
+overwrite a record that already exists, so your real sites on the same domain are safe. The exception is a
+wildcard record (`*.example.com`): it doesn't block the new record, so the shared name
+stops going wherever the wildcard points. `share` warns when the name already resolved
+somewhere before you shared it.
 
 ### How private sharing works
 

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,12 +165,23 @@ func cmdShare(args []string) error {
 		return errors.New("not logged in to Cloudflare on this Mac — run `cloudflared tunnel login`")
 	}
 	host := name + "." + cfg.Tunnel.Domain
+	// A wildcard record (*.domain) doesn't block the new record, which then
+	// silently takes the name over from whatever the wildcard points to.
+	var before []string
+	if srv.Share == nil {
+		before, _ = net.LookupHost(host)
+	}
 	if err := cloudflared.RouteDNS(cfg.Tunnel.ID, host); err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("%s already has a DNS record for something else — homebase won't overwrite it. "+
 				"Pick another server name or delete the record in the Cloudflare dashboard", host)
 		}
 		return err
+	}
+	if len(before) > 0 {
+		fmt.Printf("note: %s already resolved to %s before sharing (a wildcard record?).\n"+
+			"      This name now goes to your Mac instead; `homebase unshare` won't give it back — delete the record in Cloudflare for that.\n",
+			host, strings.Join(before, ", "))
 	}
 
 	sh := srv.Share
