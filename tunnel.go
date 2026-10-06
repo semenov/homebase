@@ -136,14 +136,18 @@ func restartProxy() {
 
 func cmdShare(args []string) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: homebase share <name> [--public] [--new-token]")
+		return errors.New("usage: homebase share <name> [--private | --public] [--new-token]")
 	}
 	name := args[0]
-	public, newToken := false, false
+	// mode is "" when neither flag is given: new shares are public, and
+	// re-running share keeps an existing share's mode.
+	mode, newToken := "", false
 	for _, a := range args[1:] {
 		switch a {
 		case "--public", "-public":
-			public = true
+			mode = "public"
+		case "--private", "-private":
+			mode = "private"
 		case "--new-token", "-new-token":
 			newToken = true
 		default:
@@ -157,6 +161,9 @@ func cmdShare(args []string) error {
 	srv, err := cfg.Get(name)
 	if err != nil {
 		return err
+	}
+	if mode == "public" && newToken {
+		return errors.New("--new-token only applies to private shares")
 	}
 	if cfg.Tunnel == nil {
 		return errors.New("no tunnel yet — run `homebase tunnel setup <domain>` first")
@@ -186,9 +193,15 @@ func cmdShare(args []string) error {
 
 	sh := srv.Share
 	if sh == nil {
-		sh = &config.Share{}
+		sh = &config.Share{Public: true}
 	}
-	sh.Public = public
+	switch {
+	case mode == "public":
+		sh.Public = true
+	case mode == "private" || newToken:
+		sh.Public = false
+	}
+	public := sh.Public
 	if public {
 		sh.Token = ""
 	} else if sh.Token == "" || newToken {
@@ -203,6 +216,7 @@ func cmdShare(args []string) error {
 
 	if public {
 		fmt.Printf("%s is public: %s\n", name, cfg.PublicURL(name))
+		fmt.Printf("anyone with the URL can open it; `homebase share %s --private` requires a token\n", name)
 	} else {
 		fmt.Printf("%s is shared privately. Open this link once per browser:\n  %s\n", name, shareLink(cfg, name))
 	}

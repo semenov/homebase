@@ -44,8 +44,8 @@ type Tunnel struct {
 	Port   int    `yaml:"port"`
 }
 
-// Share marks a server as published through the tunnel. Private shares
-// (the default) only open with Token.
+// Share marks a server as published through the tunnel. Shares are public
+// by default; private ones (Public false) only open with Token.
 type Share struct {
 	Public bool   `yaml:"public,omitempty"`
 	Token  string `yaml:"token,omitempty"`

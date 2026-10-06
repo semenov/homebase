@@ -44,7 +44,7 @@ Usage:
   homebase lan on|off|status        reach servers from other devices at http://<name>.local
   homebase proxy install|uninstall|status|run
   homebase tunnel setup <domain> | status | uninstall   optional Cloudflare Tunnel
-  homebase share <name> [--public] [--new-token]        publish at https://<name>.<domain>
+  homebase share <name> [--private] [--new-token]       publish at https://<name>.<domain>
   homebase unshare <name>
   homebase version
   homebase agents                   usage guide for AI coding agents

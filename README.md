@@ -99,8 +99,9 @@ on the same network at `http://<name>.local`.
 ## Sharing over the internet (Cloudflare Tunnel, optional)
 
 You can publish chosen servers at `https://<name>.<your-domain>`. They're reachable from
-your phone on mobile data, or by a colleague anywhere. Nothing is shared until you run
-`homebase share`, and shared servers are private by default.
+your phone on mobile data, by a colleague anywhere, or by a mobile app talking to its
+backend. Nothing is shared until you run `homebase share`. A shared server is public:
+anyone with the URL can open it. Add `--private` to require a secret token.
 
 ```
 browser ── https://my-app.example.com ──▶ Cloudflare ──tunnel──▶ cloudflared (on your Mac)
@@ -128,9 +129,10 @@ homebase tunnel setup example.com     # creates the tunnel "homebase" and starts
 ### Sharing a server
 
 ```sh
-homebase share my-app                 # private: prints a link with a secret token
-homebase share my-app --public        # anyone with the URL can open it
+homebase share my-app                 # public: anyone with the URL can open it
+homebase share my-app --private       # requires a token; prints a link that contains it
 homebase share my-app --new-token     # replace the token; old links stop working
+homebase share my-app --public        # make a private share public again
 homebase unshare my-app               # stop sharing; the URL returns 404
 homebase tunnel status                # what is shared, and how
 ```
@@ -141,18 +143,25 @@ wildcard record (`*.example.com`): it doesn't block the new record, so the share
 stops going wherever the wildcard points. `share` warns when the name already resolved
 somewhere before you shared it.
 
-### How private sharing works
+Running `share` again without a flag keeps the server's current mode, so a private share stays private.
+
+### Private shares (`--private`)
+
+Public is the right default when the server has its own login, or when outside services
+call it (webhooks, push callbacks). For anything else that shouldn't be open to the
+internet, such as a demo, an admin panel, or test data, use `--private`.
 
 - **The share link.** It looks like `https://my-app.example.com/?homebase_token=…`.
 - **First visit.** The proxy swaps the token for a cookie that lasts one year and removes the
   token from the address bar. After that, the plain URL works in that browser.
 - **Without the token or cookie.** The proxy answers 401.
-- **Scripts.** Send the token in an `X-Homebase-Token` header instead.
+- **Scripts and apps.** Send the token in an `X-Homebase-Token` header instead. In a mobile app,
+  add the header in a request interceptor in debug builds only.
 - **Your app never sees the token.** The proxy strips both the cookie and the header before
   passing the request on.
 
 Treat the link like a password: anyone who has it gets in. Run `--new-token` if it leaks.
-If you need real logins (email codes, Google, etc.), share with `--public` and put
+If you need real logins (email codes, Google, etc.), keep the share public and put
 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-apps/)
 in front of the hostname. Access is free for up to 50 users.
 
