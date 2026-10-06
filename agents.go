@@ -58,6 +58,10 @@ stable URLs (http://<name>.localhost).
   (until stopped).
 - Ask the user before ` + "`homebase proxy install|uninstall`" + ` or ` + "`homebase lan on|off`" + `:
   they affect the whole machine (port 80) and the local network.
+- Never run ` + "`homebase share`" + `, ` + "`unshare`" + ` or ` + "`tunnel setup|uninstall`" + ` unless the
+  user explicitly asks: sharing publishes a server on the internet. Share
+  links (share_link in ls --json) contain a secret token; don't paste them
+  anywhere except to the user.
 - Extra environment: ` + "`-env KEY=VALUE`" + ` (repeatable) on ` + "`add`" + `. The command runs via
   ` + "`zsh -lc`" + ` in -dir, so the user's PATH (nvm, brew) is available.
 
@@ -66,7 +70,7 @@ stable URLs (http://<name>.localhost).
   homebase ls --json fields per server:
     name, state (running|stopped|crashed|exited), last_exit, pid, port,
     listening, url, local_url, lan_url (when LAN mode is on), dir, command,
-    env, log
+    env, log, shared (public|private), public_url, share_link
   Config:   ~/.config/homebase/servers.yaml ($HOMEBASE_CONFIG overrides)
   Logs:     ~/Library/Logs/homebase/<name>.log
   Exit codes: 0 success, 1 error, 2 usage

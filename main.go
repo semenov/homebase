@@ -43,6 +43,9 @@ Usage:
   homebase edit                     open the config in $EDITOR
   homebase lan on|off|status        reach servers from other devices at http://<name>.local
   homebase proxy install|uninstall|status|run
+  homebase tunnel setup <domain> | status | uninstall   optional Cloudflare Tunnel
+  homebase share <name> [--public] [--new-token]        publish at https://<name>.<domain>
+  homebase unshare <name>
   homebase version
   homebase agents                   usage guide for AI coding agents
 
@@ -79,6 +82,12 @@ func main() {
 		err = cmdLAN(args)
 	case "proxy":
 		err = cmdProxy(args)
+	case "tunnel":
+		err = cmdTunnel(args)
+	case "share":
+		err = cmdShare(args)
+	case "unshare":
+		err = cmdUnshare(args)
 	case "agents":
 		fmt.Print(agentGuide)
 	case "version", "-v", "--version":
@@ -180,15 +189,20 @@ func cmdRemove(args []string) error {
 }
 
 type serverInfo struct {
-	Name      string            `json:"name"`
-	State     string            `json:"state"` // running, stopped, crashed, exited
-	LastExit  string            `json:"last_exit,omitempty"`
-	PID       int               `json:"pid,omitempty"`
-	Port      int               `json:"port"`
-	Listening bool              `json:"listening"`
-	URL       string            `json:"url"`
-	LocalURL  string            `json:"local_url"`
-	LANURL    string            `json:"lan_url,omitempty"`
+	Name      string `json:"name"`
+	State     string `json:"state"` // running, stopped, crashed, exited
+	LastExit  string `json:"last_exit,omitempty"`
+	PID       int    `json:"pid,omitempty"`
+	Port      int    `json:"port"`
+	Listening bool   `json:"listening"`
+	URL       string `json:"url"`
+	LocalURL  string `json:"local_url"`
+	LANURL    string `json:"lan_url,omitempty"`
+	// Shared is "public" or "private" when published through the tunnel;
+	// ShareLink includes the access token for private shares.
+	Shared    string            `json:"shared,omitempty"`
+	PublicURL string            `json:"public_url,omitempty"`
+	ShareLink string            `json:"share_link,omitempty"`
 	Dir       string            `json:"dir"`
 	Command   string            `json:"command"`
 	Env       map[string]string `json:"env,omitempty"`
@@ -219,12 +233,20 @@ func cmdList(args []string) error {
 	if asJSON {
 		return listJSON(cfg, names)
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	lanCol := ""
-	if cfg.Proxy.LAN {
-		lanCol = "LAN URL\t"
+	anyShared := false
+	for _, name := range names {
+		anyShared = anyShared || cfg.Servers[name].Share != nil
 	}
-	fmt.Fprintln(tw, "NAME\tSTATE\tPID\tPORT\tURL\t"+lanCol+"DIR")
+	showPublic := anyShared && cfg.Tunnel != nil
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	header := []string{"NAME", "STATE", "PID", "PORT", "URL"}
+	if cfg.Proxy.LAN {
+		header = append(header, "LAN URL")
+	}
+	if showPublic {
+		header = append(header, "PUBLIC URL")
+	}
+	fmt.Fprintln(tw, strings.Join(append(header, "DIR"), "\t"))
 	for _, name := range names {
 		s := cfg.Servers[name]
 		st := launchd.Get(serverLabelPrefix + name)
@@ -236,11 +258,18 @@ func cmdList(args []string) error {
 		if st.Running && !config.Listening(s.Port) {
 			port += " (closed)"
 		}
-		lanURL := ""
+		row := []string{name, state(st), pid, port, cfg.URL(name)}
 		if cfg.Proxy.LAN {
-			lanURL = cfg.LANURL(name) + "\t"
+			row = append(row, cfg.LANURL(name))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s%s\n", name, state(st), pid, port, cfg.URL(name), lanURL, tildify(s.Dir))
+		if showPublic {
+			pub := "-"
+			if s.Share != nil {
+				pub = cfg.PublicURL(name) + " (" + shareKind(s.Share) + ")"
+			}
+			row = append(row, pub)
+		}
+		fmt.Fprintln(tw, strings.Join(append(row, tildify(s.Dir)), "\t"))
 	}
 	tw.Flush()
 	if len(cfg.Servers) == 0 {
@@ -262,9 +291,19 @@ func listJSON(cfg *config.Config, names []string) error {
 			Port    int  `json:"port"`
 			LAN     bool `json:"lan"`
 		} `json:"proxy"`
+		Tunnel *struct {
+			Running bool   `json:"running"`
+			Domain  string `json:"domain"`
+		} `json:"tunnel,omitempty"`
 		Servers []serverInfo `json:"servers"`
 	}{Config: config.Path(), Servers: []serverInfo{}}
 	out.Proxy.Running, out.Proxy.Port, out.Proxy.LAN = ps.Running, cfg.Proxy.Port, cfg.Proxy.LAN
+	if cfg.Tunnel != nil {
+		out.Tunnel = &struct {
+			Running bool   `json:"running"`
+			Domain  string `json:"domain"`
+		}{launchd.Get(tunnelLabel).Running, cfg.Tunnel.Domain}
+	}
 	for _, name := range names {
 		s := cfg.Servers[name]
 		st := launchd.Get(serverLabelPrefix + name)
@@ -286,6 +325,11 @@ func listJSON(cfg *config.Config, names []string) error {
 		}
 		if cfg.Proxy.LAN {
 			info.LANURL = cfg.LANURL(name)
+		}
+		if s.Share != nil && cfg.Tunnel != nil {
+			info.Shared = shareKind(s.Share)
+			info.PublicURL = cfg.PublicURL(name)
+			info.ShareLink = shareLink(cfg, name)
 		}
 		out.Servers = append(out.Servers, info)
 	}
@@ -485,7 +529,7 @@ func cmdLogs(args []string) error {
 		return err
 	}
 	path := logPath(name)
-	if name != "proxy" {
+	if name != "proxy" && name != "tunnel" {
 		cfg, err := config.Load()
 		if err != nil {
 			return err

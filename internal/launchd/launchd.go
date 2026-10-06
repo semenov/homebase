@@ -189,3 +189,9 @@ func Get(label string) Status {
 	}
 	return s
 }
+
+// Restart kills and relaunches a loaded job with its current plist.
+func Restart(label string) error {
+	_, err := launchctl("kickstart", "-k", target(label))
+	return err
+}

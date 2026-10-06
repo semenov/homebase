@@ -19,7 +19,10 @@ import (
 const (
 	DefaultProxyPort = 80
 	DefaultDomain    = "localhost"
-	firstAutoPort    = 4000
+	// DefaultTunnelPort is the loopback port where the proxy receives
+	// traffic from cloudflared.
+	DefaultTunnelPort = 8780
+	firstAutoPort     = 4000
 )
 
 type Proxy struct {
@@ -32,15 +35,33 @@ type Proxy struct {
 	LAN bool `yaml:"lan,omitempty"`
 }
 
+// Tunnel is the optional Cloudflare Tunnel that publishes shared servers
+// at https://<name>.<Domain>.
+type Tunnel struct {
+	Name   string `yaml:"name"`
+	ID     string `yaml:"id"`
+	Domain string `yaml:"domain"`
+	Port   int    `yaml:"port"`
+}
+
+// Share marks a server as published through the tunnel. Private shares
+// (the default) only open with Token.
+type Share struct {
+	Public bool   `yaml:"public,omitempty"`
+	Token  string `yaml:"token,omitempty"`
+}
+
 type Server struct {
 	Dir     string            `yaml:"dir"`
 	Command string            `yaml:"command"`
 	Port    int               `yaml:"port"`
 	Env     map[string]string `yaml:"env,omitempty"`
+	Share   *Share            `yaml:"share,omitempty"`
 }
 
 type Config struct {
 	Proxy   Proxy              `yaml:"proxy"`
+	Tunnel  *Tunnel            `yaml:"tunnel,omitempty"`
 	Servers map[string]*Server `yaml:"servers"`
 }
 
@@ -51,6 +72,9 @@ var nameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 func ValidName(name string) error {
 	if !nameRe.MatchString(name) {
 		return fmt.Errorf("invalid name %q: use lowercase letters, digits and dashes", name)
+	}
+	if name == "proxy" || name == "tunnel" {
+		return fmt.Errorf("%q is reserved for homebase's own logs", name)
 	}
 	return nil
 }
@@ -82,6 +106,9 @@ func Load() (*Config, error) {
 	if c.Servers == nil {
 		c.Servers = map[string]*Server{}
 	}
+	if c.Tunnel != nil && c.Tunnel.Port == 0 {
+		c.Tunnel.Port = DefaultTunnelPort
+	}
 	return c, nil
 }
 
@@ -94,7 +121,8 @@ func (c *Config) Save() error {
 		return err
 	}
 	tmp := Path() + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	// 0600: the file holds share tokens.
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, Path())
@@ -120,7 +148,7 @@ func (c *Config) Get(name string) (*Server, error) {
 // FreePort returns the lowest port >= 4000 that is neither assigned to
 // another server nor currently accepting connections.
 func (c *Config) FreePort() int {
-	used := map[int]bool{c.Proxy.Port: true}
+	used := map[int]bool{c.Proxy.Port: true, DefaultTunnelPort: true}
 	for _, s := range c.Servers {
 		used[s.Port] = true
 	}
@@ -136,6 +164,14 @@ func (c *Config) URL(name string) string { return c.url(name + "." + c.Proxy.Dom
 
 // LANURL is the address other devices use, e.g. http://api.local.
 func (c *Config) LANURL(name string) string { return c.url(name + ".local") }
+
+// PublicURL is the tunnel address of a server, or "" without a tunnel.
+func (c *Config) PublicURL(name string) string {
+	if c.Tunnel == nil {
+		return ""
+	}
+	return "https://" + name + "." + c.Tunnel.Domain
+}
 
 func (c *Config) url(host string) string {
 	if c.Proxy.Port != 80 {

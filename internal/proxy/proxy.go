@@ -62,6 +62,16 @@ func Run() error {
 	}
 	log.Printf("homebase proxy listening on %s (*.%s)", addr, cfg.Proxy.Domain)
 
+	if cfg.Tunnel != nil {
+		taddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.Tunnel.Port))
+		tln, err := net.Listen("tcp", taddr)
+		if err != nil {
+			return fmt.Errorf("tunnel listener: %w", err)
+		}
+		log.Printf("tunnel listener on %s (*.%s)", taddr, cfg.Tunnel.Domain)
+		go func() { log.Fatal(http.Serve(tln, http.HandlerFunc(p.serveTunnel))) }()
+	}
+
 	pub := bonjour.NewPublisher()
 	go p.announce(pub)
 	sig := make(chan os.Signal, 1)
@@ -130,14 +140,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep the original Host: dev servers (Vite etc.) check it and generate
+	// absolute URLs from it.
+	reverseProxy(name, srv, func(pr *httputil.ProxyRequest) { pr.Out.Host = pr.In.Host }).ServeHTTP(w, r)
+}
+
+// reverseProxy forwards to the server's port; rewrite runs after the
+// standard target and X-Forwarded-* setup.
+func reverseProxy(name string, srv *config.Server, rewrite func(*httputil.ProxyRequest)) *httputil.ReverseProxy {
 	target := &url.URL{Scheme: "http", Host: "localhost:" + strconv.Itoa(srv.Port)}
-	rp := &httputil.ReverseProxy{
+	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.SetXForwarded()
-			// Keep the original Host: dev servers (Vite etc.) check it and
-			// generate absolute URLs from it.
-			pr.Out.Host = pr.In.Host
+			rewrite(pr)
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -146,7 +162,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				name, srv.Port, name, name, err)
 		},
 	}
-	rp.ServeHTTP(w, r)
 }
 
 func isLoopback(remoteAddr string) bool {
