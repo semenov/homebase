@@ -4,10 +4,23 @@ A CLI for running local dev servers on macOS. Each server is a per-user
 launchd agent, and a small reverse proxy makes it available at
 `http://<name>.localhost`.
 
-```sh
-go install github.com/semenov/homebase@latest   # or `go install .` from a checkout
-homebase proxy install                          # one-time: proxy on :80 as a launch agent
+## Install
 
+With [Homebrew](https://brew.sh):
+
+```sh
+brew install semenov/tap/homebase
+homebase proxy install            # one-time: proxy on :80 as a launch agent
+```
+
+After `brew upgrade homebase`, run `homebase proxy install` again so the
+proxy restarts on the new version.
+
+From source: `go install github.com/semenov/homebase@latest`.
+
+## Usage
+
+```sh
 cd ~/Dev/my-app
 homebase add my-app -- npm run dev -- --port '$PORT'
 homebase start my-app

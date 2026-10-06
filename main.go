@@ -19,6 +19,9 @@ import (
 	"github.com/semenov/homebase/internal/proxy"
 )
 
+// version is set at build time: -ldflags "-X main.version=..."
+var version = "dev"
+
 const (
 	serverLabelPrefix = "dev.homebase.server."
 	proxyLabel        = "dev.homebase.proxy"
@@ -36,6 +39,7 @@ Usage:
   homebase edit                     open the config in $EDITOR
   homebase lan on|off|status        reach servers from other devices at http://<name>.local
   homebase proxy install|uninstall|status|run
+  homebase version
 
 Servers get their port in $PORT. Commands run via "zsh -lc" in DIR,
 so your normal shell PATH (nvm, brew, ...) is available.
@@ -68,6 +72,8 @@ func main() {
 		err = cmdLAN(args)
 	case "proxy":
 		err = cmdProxy(args)
+	case "version", "-v", "--version":
+		fmt.Println(version)
 	case "help", "-h", "--help":
 		fmt.Printf(usage, config.Path())
 	default:
@@ -399,15 +405,9 @@ func cmdProxy(args []string) error {
 	case "run":
 		return proxy.Run()
 	case "install":
-		exe, err := os.Executable()
+		exe, err := stableExecutable()
 		if err != nil {
 			return err
-		}
-		if exe, err = filepath.EvalSymlinks(exe); err != nil {
-			return err
-		}
-		if strings.Contains(exe, "/go-build") {
-			return errors.New("run `go install` and use the installed binary — the launch agent points at this executable's path")
 		}
 		job := &launchd.Job{
 			Label:     proxyLabel,
@@ -443,6 +443,31 @@ func cmdProxy(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown proxy command %q", args[0])
+}
+
+// stableExecutable returns a path to this binary that survives upgrades, for
+// the proxy launch agent. Homebrew installs into versioned directories and
+// links them from its bin dir, so prefer the `homebase` on PATH when it is a
+// link to this same binary.
+func stableExecutable() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return "", err
+	}
+	if strings.Contains(exe, "/go-build") {
+		return "", errors.New("install homebase first — the launch agent needs a permanent path to the binary")
+	}
+	if p, err := exec.LookPath("homebase"); err == nil {
+		if p, err = filepath.Abs(p); err == nil {
+			if resolved, err := filepath.EvalSymlinks(p); err == nil && resolved == exe {
+				return p, nil
+			}
+		}
+	}
+	return exe, nil
 }
 
 func run(name string, args ...string) error {
