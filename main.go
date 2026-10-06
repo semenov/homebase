@@ -3,15 +3,18 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/semenov/homebase/internal/bonjour"
 	"github.com/semenov/homebase/internal/config"
@@ -32,17 +35,21 @@ const usage = `homebase — run local dev servers as launchd agents, reachable a
 Usage:
   homebase add <name> [-dir DIR] [-port N] [-env K=V]... [-force] -- <command...>
   homebase rm <name>
-  homebase ls
-  homebase start|stop|restart <name>... | -a
+  homebase ls [name...] [--json]
+  homebase start|restart <name>... | -a [--wait [--timeout 60s]]
+  homebase stop <name>... | -a
   homebase logs <name> [-f] [-n LINES]
   homebase open <name>
   homebase edit                     open the config in $EDITOR
   homebase lan on|off|status        reach servers from other devices at http://<name>.local
   homebase proxy install|uninstall|status|run
   homebase version
+  homebase agents                   usage guide for AI coding agents
 
 Servers get their port in $PORT. Commands run via "zsh -lc" in DIR,
 so your normal shell PATH (nvm, brew, ...) is available.
+
+AI coding agents: read ` + "`homebase agents`" + ` first.
 
 Config: ` + "%s\n"
 
@@ -59,7 +66,7 @@ func main() {
 	case "rm", "remove":
 		err = cmdRemove(args)
 	case "ls", "list", "status":
-		err = cmdList()
+		err = cmdList(args)
 	case "start", "stop", "restart":
 		err = cmdControl(cmd, args)
 	case "logs":
@@ -72,6 +79,8 @@ func main() {
 		err = cmdLAN(args)
 	case "proxy":
 		err = cmdProxy(args)
+	case "agents":
+		fmt.Print(agentGuide)
 	case "version", "-v", "--version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -170,10 +179,45 @@ func cmdRemove(args []string) error {
 	return nil
 }
 
-func cmdList() error {
+type serverInfo struct {
+	Name      string            `json:"name"`
+	State     string            `json:"state"` // running, stopped, crashed, exited
+	LastExit  string            `json:"last_exit,omitempty"`
+	PID       int               `json:"pid,omitempty"`
+	Port      int               `json:"port"`
+	Listening bool              `json:"listening"`
+	URL       string            `json:"url"`
+	LocalURL  string            `json:"local_url"`
+	LANURL    string            `json:"lan_url,omitempty"`
+	Dir       string            `json:"dir"`
+	Command   string            `json:"command"`
+	Env       map[string]string `json:"env,omitempty"`
+	Log       string            `json:"log"`
+}
+
+func cmdList(args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	asJSON := false
+	var names []string
+	for _, a := range args {
+		switch a {
+		case "--json", "-json":
+			asJSON = true
+		default:
+			if _, err := cfg.Get(a); err != nil {
+				return err
+			}
+			names = append(names, a)
+		}
+	}
+	if names == nil {
+		names = cfg.Names()
+	}
+	if asJSON {
+		return listJSON(cfg, names)
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	lanCol := ""
@@ -181,7 +225,7 @@ func cmdList() error {
 		lanCol = "LAN URL\t"
 	}
 	fmt.Fprintln(tw, "NAME\tSTATE\tPID\tPORT\tURL\t"+lanCol+"DIR")
-	for _, name := range cfg.Names() {
+	for _, name := range names {
 		s := cfg.Servers[name]
 		st := launchd.Get(serverLabelPrefix + name)
 		pid := "-"
@@ -209,18 +253,68 @@ func cmdList() error {
 	return nil
 }
 
-func state(st launchd.Status) string {
+func listJSON(cfg *config.Config, names []string) error {
+	ps := launchd.Get(proxyLabel)
+	out := struct {
+		Config string `json:"config"`
+		Proxy  struct {
+			Running bool `json:"running"`
+			Port    int  `json:"port"`
+			LAN     bool `json:"lan"`
+		} `json:"proxy"`
+		Servers []serverInfo `json:"servers"`
+	}{Config: config.Path(), Servers: []serverInfo{}}
+	out.Proxy.Running, out.Proxy.Port, out.Proxy.LAN = ps.Running, cfg.Proxy.Port, cfg.Proxy.LAN
+	for _, name := range names {
+		s := cfg.Servers[name]
+		st := launchd.Get(serverLabelPrefix + name)
+		info := serverInfo{
+			Name:      name,
+			State:     stateName(st),
+			PID:       st.PID,
+			Port:      s.Port,
+			Listening: config.Listening(s.Port),
+			URL:       cfg.URL(name),
+			LocalURL:  "http://localhost:" + strconv.Itoa(s.Port),
+			Dir:       s.Dir,
+			Command:   s.Command,
+			Env:       s.Env,
+			Log:       logPath(name),
+		}
+		if info.State == "crashed" {
+			info.LastExit = st.LastExit
+		}
+		if cfg.Proxy.LAN {
+			info.LANURL = cfg.LANURL(name)
+		}
+		out.Servers = append(out.Servers, info)
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+func stateName(st launchd.Status) string {
 	switch {
 	case st.Running:
 		return "running"
 	case !st.Loaded:
 		return "stopped"
 	case st.LastExit != "" && st.LastExit != "0" && !strings.HasPrefix(st.LastExit, "("):
-		return "crashed (exit " + st.LastExit + ")"
+		return "crashed"
 	default:
 		return "exited"
 	}
 }
+
+func state(st launchd.Status) string {
+	if s := stateName(st); s != "crashed" {
+		return s
+	}
+	return "crashed (exit " + st.LastExit + ")"
+}
+
+func logPath(name string) string { return filepath.Join(launchd.LogDir(), name+".log") }
 
 func tildify(p string) string {
 	home, _ := os.UserHomeDir()
@@ -240,7 +334,7 @@ func serverJob(name string, s *config.Server) *launchd.Job {
 		Args:    []string{"/bin/zsh", "-lc", s.Command},
 		Dir:     s.Dir,
 		Env:     env,
-		LogPath: filepath.Join(launchd.LogDir(), name+".log"),
+		LogPath: logPath(name),
 	}
 }
 
@@ -249,13 +343,41 @@ func cmdControl(cmd string, args []string) error {
 	if err != nil {
 		return err
 	}
-	names := args
-	if len(args) == 1 && (args[0] == "-a" || args[0] == "--all") {
+	var names []string
+	all, wait, timeout := false, false, 60*time.Second
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-a" || a == "--all":
+			all = true
+		case (a == "-w" || a == "--wait") && cmd != "stop":
+			wait = true
+		case strings.HasPrefix(a, "--timeout") && cmd != "stop":
+			v, ok := strings.CutPrefix(a, "--timeout=")
+			if !ok {
+				if i+1 >= len(args) {
+					return errors.New("--timeout needs a duration, e.g. 120s")
+				}
+				i++
+				v = args[i]
+			}
+			if timeout, err = time.ParseDuration(v); err != nil {
+				return fmt.Errorf("bad --timeout: %w", err)
+			}
+			wait = true
+		case strings.HasPrefix(a, "-"):
+			return fmt.Errorf("unknown flag %s", a)
+		default:
+			names = append(names, a)
+		}
+	}
+	if all {
 		names = cfg.Names()
 	}
 	if len(names) == 0 {
 		return fmt.Errorf("usage: homebase %s <name>... | -a", cmd)
 	}
+	logStart := map[string]int64{}
 	for _, name := range names {
 		s, err := cfg.Get(name)
 		if err != nil {
@@ -263,6 +385,9 @@ func cmdControl(cmd string, args []string) error {
 		}
 		switch cmd {
 		case "start", "restart":
+			if fi, err := os.Stat(logPath(name)); err == nil {
+				logStart[name] = fi.Size()
+			}
 			// Start always reloads, so it doubles as restart.
 			if err := launchd.Start(serverJob(name, s)); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
@@ -278,7 +403,74 @@ func cmdControl(cmd string, args []string) error {
 	if cmd != "stop" && !launchd.Get(proxyLabel).Running {
 		fmt.Println("note: the proxy is not running — `homebase proxy install` to enable *.localhost URLs")
 	}
+	if wait {
+		deadline := time.Now().Add(timeout)
+		for _, name := range names {
+			if err := waitReady(name, cfg.Servers[name], deadline, logStart[name]); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// waitReady blocks until the server accepts connections on its port. It
+// fails early if the process exits, and prints the log output written
+// since the start so the cause is visible without another command.
+func waitReady(name string, s *config.Server, deadline time.Time, logOffset int64) error {
+	label := serverLabelPrefix + name
+	for {
+		if config.Listening(s.Port) {
+			fmt.Printf("%s is listening on port %d\n", name, s.Port)
+			return nil
+		}
+		st := launchd.Get(label)
+		var problem string
+		switch {
+		case !st.Loaded:
+			problem = "is not loaded"
+		case !st.Running && stateName(st) == "crashed":
+			problem = "crashed (exit " + st.LastExit + ")"
+		case !st.Running && st.LastExit == "0":
+			problem = "exited with code 0 without listening"
+		case time.Now().After(deadline):
+			problem = fmt.Sprintf("is running but not listening on port %d yet (does the command use $PORT?)", s.Port)
+		}
+		if problem != "" {
+			printNewLog(name, logOffset)
+			return fmt.Errorf("%s %s — log: %s", name, problem, logPath(name))
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func printNewLog(name string, offset int64) {
+	const maxBytes = 8 << 10
+	f, err := os.Open(logPath(name))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return
+	}
+	if fi.Size() < offset {
+		offset = 0 // truncated or rotated
+	}
+	if fi.Size()-offset > maxBytes {
+		offset = fi.Size() - maxBytes
+	}
+	data := make([]byte, fi.Size()-offset)
+	if _, err := f.ReadAt(data, offset); err != nil && !errors.Is(err, io.EOF) {
+		return
+	}
+	text := strings.TrimRight(string(data), "\n")
+	if text == "" {
+		fmt.Fprintf(os.Stderr, "--- %s: no log output ---\n", name)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "--- %s log (since start) ---\n%s\n---\n", name, text)
 }
 
 func cmdLogs(args []string) error {
@@ -292,7 +484,7 @@ func cmdLogs(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	path := filepath.Join(launchd.LogDir(), name+".log")
+	path := logPath(name)
 	if name != "proxy" {
 		cfg, err := config.Load()
 		if err != nil {

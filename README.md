@@ -48,6 +48,22 @@ homebase stop my-app
 - **Applying changes.** After changing a server's settings, run `homebase restart <name>`.
   This rewrites the plist and reloads the job.
 
+## For AI agents
+
+`homebase agents` prints a guide written for coding agents such as Claude Code or Codex.
+It covers the workflow, the rules, and the JSON fields. Two features exist mainly for scripts and agents:
+
+- **`homebase start <name> --wait`** waits until the server accepts connections.
+  If the server crashes, exits, or times out, it exits non-zero and prints the log output since the start.
+- **`homebase ls --json`** reports each server's state, pid, port, whether the port is listening,
+  its URLs, and its log path.
+
+To get agents to use homebase in your projects, add this to `CLAUDE.md` / `AGENTS.md`:
+
+```md
+Run dev servers with homebase, not in the background yourself. Read `homebase agents` first.
+```
+
 ## Local domains
 
 - **No DNS setup.** macOS resolves `*.localhost` to 127.0.0.1, so you don't need
