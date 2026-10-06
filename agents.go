@@ -11,6 +11,10 @@ stable URLs (http://<name>.localhost).
 
 ## Workflow
 
+The examples pass <name> explicitly. Inside the project directory it can be
+omitted (commands use the server registered for the current directory, add
+names it after the folder), but explicit names are unambiguous: prefer them.
+
 1. Register the server (safe to repeat: -force overwrites):
 
      homebase add <name> -dir <project-dir> -force -- '<command>'

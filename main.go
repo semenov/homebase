@@ -33,21 +33,24 @@ const (
 const usage = `homebase — run local dev servers as launchd agents, reachable at http://<name>.localhost
 
 Usage:
-  homebase add <name> [-dir DIR] [-port N] [-env K=V]... [-force] -- <command...>
-  homebase rm <name>
+  homebase add [name] [-dir DIR] [-port N] [-env K=V]... [-force] -- <command...>
+  homebase rm [name]
   homebase ls [name...] [--json]
-  homebase start|restart <name>... | -a [--wait [--timeout 60s]]
-  homebase stop <name>... | -a
-  homebase logs <name> [-f] [-n LINES]
-  homebase open <name>
+  homebase start|restart [name...] | -a [--wait [--timeout 60s]]
+  homebase stop [name...] | -a
+  homebase logs [name] [-f] [-n LINES]
+  homebase open [name]
   homebase edit                     open the config in $EDITOR
   homebase lan on|off|status        reach servers from other devices at http://<name>.local
   homebase proxy install|uninstall|status|run
   homebase tunnel setup <domain> | status | uninstall   optional Cloudflare Tunnel
-  homebase share <name> [--private] [--new-token]       publish at https://<name>.<domain>
-  homebase unshare <name>
+  homebase share [name] [--private] [--new-token]       publish at https://<name>.<domain>
+  homebase unshare [name]
   homebase version
   homebase agents                   usage guide for AI coding agents
+
+Inside a project folder the name can be left out: commands use the server
+registered for the current directory, and add names it after the folder.
 
 Servers get their port in $PORT. Commands run via "zsh -lc" in DIR,
 so your normal shell PATH (nvm, brew, ...) is available.
@@ -116,25 +119,19 @@ func (e envFlag) Set(v string) error {
 }
 
 func cmdAdd(args []string) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: homebase add <name> [flags] -- <command...>")
-	}
-	name := args[0]
-	if err := config.ValidName(name); err != nil {
-		return err
-	}
+	name, rest := splitName(args)
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "working directory")
 	port := fs.Int("port", 0, "port the server listens on (default: first free from 4000)")
 	force := fs.Bool("force", false, "overwrite an existing server")
 	env := envFlag{}
 	fs.Var(env, "env", "extra environment variable KEY=VALUE (repeatable)")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(rest); err != nil {
 		return err
 	}
 	command := strings.Join(fs.Args(), " ")
 	if command == "" {
-		return errors.New("missing command, e.g. homebase add web -- npm run dev")
+		return errors.New("missing command, e.g. homebase add -- npm run dev")
 	}
 	absDir, err := filepath.Abs(*dir)
 	if err != nil {
@@ -143,12 +140,25 @@ func cmdAdd(args []string) error {
 	if fi, err := os.Stat(absDir); err != nil || !fi.IsDir() {
 		return fmt.Errorf("not a directory: %s", absDir)
 	}
+	derived := name == ""
+	if derived {
+		if name, err = nameFromDir(absDir); err != nil {
+			return err
+		}
+	}
+	if err := config.ValidName(name); err != nil {
+		return err
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	if _, exists := cfg.Servers[name]; exists && !*force {
+	if old, exists := cfg.Servers[name]; exists && !*force {
+		if derived && old.Dir != absDir {
+			return fmt.Errorf("a server named %q already exists for %s — pick another name: homebase add <name> -- %s",
+				name, tildify(old.Dir), command)
+		}
 		return fmt.Errorf("%q already exists (use -force to overwrite)", name)
 	}
 	if *port == 0 {
@@ -158,7 +168,11 @@ func cmdAdd(args []string) error {
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	fmt.Printf("added %s → %s (port %d)\nstart it with: homebase start %s\n", name, cfg.URL(name), *port, name)
+	fmt.Printf("added %s → %s (port %d)\nstart it with: homebase start", name, cfg.URL(name), *port)
+	if cwd, _ := os.Getwd(); cwd != absDir {
+		fmt.Print(" " + name)
+	}
+	fmt.Println()
 	if launchd.Get(serverLabelPrefix + name).Loaded {
 		fmt.Printf("it is running with the old settings; apply with: homebase restart %s\n", name)
 	}
@@ -166,15 +180,15 @@ func cmdAdd(args []string) error {
 }
 
 func cmdRemove(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: homebase rm <name>")
+	if len(args) > 1 {
+		return errors.New("usage: homebase rm [name]")
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	name := args[0]
-	if _, err := cfg.Get(name); err != nil {
+	name, _ := splitName(args)
+	if name, err = resolveName(cfg, name); err != nil {
 		return err
 	}
 	if err := launchd.Remove(serverLabelPrefix + name); err != nil {
@@ -273,7 +287,7 @@ func cmdList(args []string) error {
 	}
 	tw.Flush()
 	if len(cfg.Servers) == 0 {
-		fmt.Println("no servers yet — homebase add <name> -- <command>")
+		fmt.Println("no servers yet — in a project folder: homebase add -- <command>")
 	}
 	ps := launchd.Get(proxyLabel)
 	if !ps.Running {
@@ -417,9 +431,12 @@ func cmdControl(cmd string, args []string) error {
 	}
 	if all {
 		names = cfg.Names()
-	}
-	if len(names) == 0 {
-		return fmt.Errorf("usage: homebase %s <name>... | -a", cmd)
+	} else if len(names) == 0 {
+		name, err := serverForCwd(cfg)
+		if err != nil {
+			return err
+		}
+		names = []string{name}
 	}
 	logStart := map[string]int64{}
 	for _, name := range names {
@@ -518,26 +535,23 @@ func printNewLog(name string, offset int64) {
 }
 
 func cmdLogs(args []string) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: homebase logs <name> [-f] [-n LINES]")
-	}
-	name := args[0]
+	name, rest := splitName(args)
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	follow := fs.Bool("f", false, "follow")
 	lines := fs.Int("n", 50, "number of lines")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	path := logPath(name)
 	if name != "proxy" && name != "tunnel" {
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-		if _, err := cfg.Get(name); err != nil {
+		if name, err = resolveName(cfg, name); err != nil {
 			return err
 		}
 	}
+	path := logPath(name)
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("no logs yet for %s (%s)", name, path)
 	}
@@ -549,17 +563,18 @@ func cmdLogs(args []string) error {
 }
 
 func cmdOpen(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: homebase open <name>")
+	if len(args) > 1 {
+		return errors.New("usage: homebase open [name]")
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	if _, err := cfg.Get(args[0]); err != nil {
+	name, _ := splitName(args)
+	if name, err = resolveName(cfg, name); err != nil {
 		return err
 	}
-	return run("open", cfg.URL(args[0]))
+	return run("open", cfg.URL(name))
 }
 
 func cmdEdit() error {

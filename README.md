@@ -26,13 +26,18 @@ From source: `go install github.com/semenov/homebase@latest`.
 
 ```sh
 cd ~/Dev/my-app
-homebase add my-app -- npm run dev -- --port '$PORT'
-homebase start my-app
-homebase open my-app                            # http://my-app.localhost
-homebase ls
-homebase logs my-app -f
-homebase stop my-app
+homebase add -- npm run dev -- --port '$PORT'   # registers "my-app", named after the folder
+homebase start
+homebase open                                   # http://my-app.localhost
+homebase logs -f
+homebase stop
+homebase ls                                     # all servers
 ```
+
+Inside a project folder, or any of its subfolders, commands act on that folder's server.
+From anywhere else, pass the name: `homebase start my-app`. Use `homebase add api -- …`
+to pick a name yourself, for example when one folder has several servers. In that case
+the other commands also need the name.
 
 ## How it works
 

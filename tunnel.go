@@ -135,14 +135,11 @@ func restartProxy() {
 }
 
 func cmdShare(args []string) error {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: homebase share <name> [--private | --public] [--new-token]")
-	}
-	name := args[0]
+	name, rest := splitName(args)
 	// mode is "" when neither flag is given: new shares are public, and
 	// re-running share keeps an existing share's mode.
 	mode, newToken := "", false
-	for _, a := range args[1:] {
+	for _, a := range rest {
 		switch a {
 		case "--public", "-public":
 			mode = "public"
@@ -158,10 +155,10 @@ func cmdShare(args []string) error {
 	if err != nil {
 		return err
 	}
-	srv, err := cfg.Get(name)
-	if err != nil {
+	if name, err = resolveName(cfg, name); err != nil {
 		return err
 	}
+	srv := cfg.Servers[name]
 	if mode == "public" && newToken {
 		return errors.New("--new-token only applies to private shares")
 	}
@@ -231,24 +228,25 @@ func cmdShare(args []string) error {
 }
 
 func cmdUnshare(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: homebase unshare <name>")
+	if len(args) > 1 {
+		return errors.New("usage: homebase unshare [name]")
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	srv, err := cfg.Get(args[0])
-	if err != nil {
+	name, _ := splitName(args)
+	if name, err = resolveName(cfg, name); err != nil {
 		return err
 	}
+	srv := cfg.Servers[name]
 	srv.Share = nil
 	if err := cfg.Save(); err != nil {
 		return err
 	}
-	fmt.Printf("%s is no longer shared", args[0])
+	fmt.Printf("%s is no longer shared", name)
 	if cfg.Tunnel != nil {
-		fmt.Printf("; %s now returns 404.\nIts DNS record stays in Cloudflare (harmless); delete it in the dashboard if you want", cfg.PublicURL(args[0]))
+		fmt.Printf("; %s now returns 404.\nIts DNS record stays in Cloudflare (harmless); delete it in the dashboard if you want", cfg.PublicURL(name))
 	}
 	fmt.Println()
 	return nil
