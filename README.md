@@ -1,4 +1,8 @@
-# homebase
+<p align="center">
+  <img src="docs/logo.svg" width="140" alt="homebase logo: a house with a server rack inside, broadcasting signal waves">
+</p>
+
+<h1 align="center">homebase</h1>
 
 A CLI for running local dev servers on macOS. Each server is a per-user
 launchd agent, and a small reverse proxy makes it available at
