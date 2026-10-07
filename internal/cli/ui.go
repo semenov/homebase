@@ -144,6 +144,7 @@ func (u *UI) KV(key, value string) {
 
 // Para prints a short explanation, wrapped and dimmed.
 func (u *UI) Para(format string, a ...any) {
+	u.gap()
 	u.printf("%s", wrapDim(u.p, fmt.Sprintf(format, a...), "    "))
 	u.printf("\n")
 	u.blank = true

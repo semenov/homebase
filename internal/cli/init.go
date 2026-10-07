@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -109,6 +110,9 @@ func installProxy() error {
 	}
 	if err := launchd.Start(job); err != nil {
 		return errf(CodeLaunchd, "", "start the proxy: %v", err)
+	}
+	for i := 0; i < 30 && !launchd.Get(proxyLabel).Running; i++ {
+		time.Sleep(100 * time.Millisecond)
 	}
 	return nil
 }

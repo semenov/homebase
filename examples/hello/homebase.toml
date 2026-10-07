@@ -1,0 +1,5 @@
+# Local dev server settings for homebase: run `homebase` in this folder.
+# The server gets its port in $PORT. https://github.com/semenov/homebase
+
+name = "hello"
+start = "python3 -m http.server $PORT --bind 127.0.0.1"

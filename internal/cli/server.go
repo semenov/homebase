@@ -149,8 +149,11 @@ func table(u *UI, servers []serverInfo) {
 			plainURL = map[bool]string{true: "crashed (exit " + s.LastExit + ")", false: "stopped"}[s.State == "crashed"]
 		}
 		extra := ""
-		if s.PublicURL != "" {
-			extra = "  " + u.p.dim("public "+s.Shared)
+		switch s.Shared {
+		case "public":
+			extra = "  " + u.p.dim("shared")
+		case "private":
+			extra = "  " + u.p.dim("shared privately")
 		}
 		u.Line(fmt.Sprintf("    %s %s%s  %s%s  %s%s", mark, s.Name, strings.Repeat(" ", nameW-len(s.Name)),
 			url, strings.Repeat(" ", max(0, urlW-utf8.RuneCountInString(plainURL))), u.p.dim(short(s.Dir)), extra))
