@@ -4,9 +4,42 @@
 
 <h1 align="center">homebase</h1>
 
-A CLI for running local dev servers on macOS. Each server is a per-user
-launchd agent, and a small reverse proxy makes it available at
-`http://<name>.localhost`.
+<p align="center">
+  <b>Local dev servers on your Mac, with real URLs.</b><br>
+  One command in a project folder. Made for people and for AI coding agents.
+</p>
+
+```
+$ cd my-app && homebase
+  → Detected Vite: pnpm dev --port $PORT --strictPort
+  → Wrote homebase.toml (commit it: anyone can now run `homebase` here)
+
+  ● my-app is running
+
+    URL       http://my-app.localhost
+    Network   http://my-app.local
+    Port      4001
+    Process   74678, up 2s
+    Command   pnpm dev --port $PORT --strictPort
+    Logs      ~/Library/Logs/homebase/my-app.log
+```
+
+## Why
+
+You have a handful of projects, each with a dev server. Every one of them needs a terminal
+tab and a port you have to remember, and it stops when the tab closes or an agent session ends.
+
+- **One command.** `homebase` works out how to start the project (Next.js, Vite, Django,
+  FastAPI, Rails, Go and more), picks a free port and starts it. You can run it again any time;
+  it only restarts the server when something changed.
+- **Runs in the background.** Every server is a launchd agent. It keeps running after you close
+  the terminal or an agent session ends, restarts after a crash and comes back after a reboot.
+- **Real URLs.** `http://my-app.localhost` on your Mac, `http://my-app.local` on your phone,
+  and `https://my-app.example.com` from anywhere when you share it through Cloudflare.
+- **Settings live in the project.** The first run writes a small `homebase.toml`. Commit it,
+  and a teammate or an agent with a fresh clone only has to run `homebase`.
+- **Built for agents.** Never interactive, `--json` everywhere, stable error codes with hints
+  and the server's log output, and `homebase docs`: a guide plus a plan for the current folder.
 
 ## Install
 
@@ -14,174 +47,213 @@ With [Homebrew](https://brew.sh):
 
 ```sh
 brew install semenov/tap/homebase
-homebase proxy install            # one-time: proxy on :80 as a launch agent
+homebase init          # once: the proxy behind http://<name>.localhost
 ```
-
-After `brew upgrade homebase`, run `homebase proxy install` again so the
-proxy restarts on the new version.
 
 From source: `go install github.com/semenov/homebase@latest`.
 
-## Usage
+## Using it
 
 ```sh
-cd ~/Dev/my-app
-homebase add -- npm run dev -- --port '$PORT'   # registers "my-app", named after the folder
-homebase start
-homebase open                                   # http://my-app.localhost
-homebase logs -f
-homebase stop
-homebase ls                                     # all servers
+cd my-app
+homebase               # start it (or: homebase start)
+homebase status        # state, URLs, port, logs
+homebase logs -f       # follow its output
+homebase open          # open it in the browser
+homebase restart       # restart, re-reading homebase.toml
+homebase stop          # stop it; it stays stopped after a reboot
+homebase forget        # stop it and remove it from homebase; your files stay
+homebase ls            # every server on this Mac
 ```
 
-Inside a project folder, or any of its subfolders, commands act on that folder's server.
-From anywhere else, pass the name: `homebase start my-app`. Use `homebase add api -- …`
-to pick a name yourself, for example when one folder has several servers. In that case
-the other commands also need the name.
+Commands act on the server of the current folder, and they work from its subfolders too.
+From anywhere else, name the server: `homebase -a my-app logs`.
 
-## How it works
+When something goes wrong, homebase tells you what happened and shows the server's output:
 
-- **Config.** Servers are listed in `~/.config/homebase/servers.yaml`
-  (`$HOMEBASE_CONFIG` overrides the path). Edit it with `homebase edit` or by hand.
-- **Running a server.** Each server becomes `~/Library/LaunchAgents/dev.homebase.server.<name>.plist`.
-  It runs `zsh -lc "<command>"` in its directory, so your normal PATH (nvm, brew) works.
-  The port is passed in `$PORT`. If you don't pick one, homebase uses the first free port from 4000.
-- **Crashes and reboots.** launchd restarts a server if it crashes.
-  `start` enables the job and `stop` disables it, so after a reboot or login,
-  servers that were running come back and stopped ones stay stopped.
-- **Logs.** Output goes to `~/Library/Logs/homebase/<name>.log`.
-- **Applying changes.** After changing a server's settings, run `homebase restart <name>`.
-  This rewrites the plist and reloads the job.
+```
+  ✗ my-app crashed while starting (exit 1)  [start_failed]
 
-## For AI agents
+    │ Error: Cannot find module 'express'
 
-`homebase agents` prints a guide written for coding agents such as Claude Code or Codex.
-It covers the workflow, the rules, and the JSON fields. Two features exist mainly for scripts and agents:
-
-- **`homebase start <name> --wait`** waits until the server accepts connections.
-  If the server crashes, exits, or times out, it exits non-zero and prints the log output since the start.
-- **`homebase ls --json`** reports each server's state, pid, port, whether the port is listening,
-  its URLs, and its log path.
-
-To get agents to use homebase in your projects, add this to `CLAUDE.md` / `AGENTS.md`:
-
-```md
-Run dev servers with homebase, not in the background yourself. Read `homebase agents` first.
+    fix the error above, then run `homebase` again (the command is in homebase.toml)
 ```
 
-## Local domains
+## homebase.toml
 
-- **No DNS setup.** macOS resolves `*.localhost` to 127.0.0.1, so you don't need
-  `/etc/hosts` or sudo. Subdomains work too: `a.my-app.localhost` goes to `my-app`.
-- **Port 80 without root.** macOS lets a normal user bind `:80`, but only on all
-  interfaces. Because of that, the proxy rejects any client that isn't on loopback
-  unless LAN mode is on.
-- **Original Host header.** The proxy keeps the browser's Host header (`my-app.localhost`)
-  and supports WebSockets, so HMR works. Vite accepts `*.localhost` hosts by default.
-- **Config reload.** The proxy re-reads the config whenever it changes. Adding a server
-  doesn't need a proxy restart. Changing `proxy.port` does.
+The first run writes this file. Every field is optional. To apply an edit, run `homebase`
+again (or `homebase restart`).
+
+```toml
+name = "my-app"                    # server name and hostname: my-app.localhost
+start = "pnpm dev --port $PORT"    # runs via `zsh -lc` in this folder, with your PATH
+port = 3000                        # pin a port (normally picked per machine)
+
+[env]
+API_URL = "http://api.localhost"   # extra environment; not for secrets
+```
+
+The server gets its port in `$PORT` and must listen on it. These flags override the file
+and update it: `homebase --start '...'`, `--port N`, `--env KEY=VALUE`. Add `--no-save` to
+leave the file as it is. Put the `--start` command in single quotes, so that `$PORT` is
+expanded by the server's shell rather than yours.
+
+### What gets detected
+
+| Project | Command |
+|---|---|
+| `package.json` | the `dev` (or `start`) script, run with npm, pnpm, yarn or bun depending on the lockfile. Adds port flags for Next.js, Vite (SvelteKit, Remix, React Router), Astro, Nuxt, Angular, webpack, Gatsby; Create React App and plain Node read `$PORT` |
+| `manage.py` | `python manage.py runserver 127.0.0.1:$PORT` |
+| FastAPI / Flask | `uvicorn main:app --reload --port $PORT` / `flask --app app run --debug --port $PORT` |
+| Rails | `bin/rails server -p $PORT` |
+| `go.mod`, `Cargo.toml`, `deno.json` | `go run .`, `cargo run`, `deno task dev` (the app must read `$PORT`) |
+| `index.html` | `python3 -m http.server $PORT` |
+
+Python commands go through `uv run` or a local `.venv` when the project has one. If a Node
+project has no `node_modules`, homebase stops and shows the install command instead of
+starting a server that would crash.
+
+## URLs
+
+| URL | Where it works | Set up with |
+|---|---|---|
+| `http://localhost:<port>` | this Mac | nothing |
+| `http://<name>.localhost` | this Mac | `homebase init` |
+| `http://<name>.local` | phones and computers on your network | `homebase init --lan` |
+| `https://<name>.<domain>` | anywhere | `homebase init --tunnel <domain>`, then `homebase share` |
+
+You can run `homebase init` again at any time. With flags it changes the setup
+(`--no-lan` and `--no-tunnel` turn things off again); without flags it makes sure everything
+is running. `homebase ls` shows the current setup.
+
+### `*.localhost`
+
+- **No DNS setup.** macOS resolves `*.localhost` to 127.0.0.1 itself, so you don't need
+  `/etc/hosts` or sudo.
+- **Port 80 without root.** macOS allows that when the proxy listens on all interfaces.
+  Unless LAN mode is on, it rejects anything that doesn't come from this Mac.
+- **Hot reload works.** The proxy keeps the browser's `Host` header and passes WebSockets through.
 - **Index page.** `http://localhost` lists all servers.
 
-## Other devices on the network (Bonjour)
+### Your network (`--lan`)
 
-`homebase lan on` makes servers reachable from your phone or other computers
-on the same network at `http://<name>.local`.
+- **Announcing names.** The proxy announces `<name>.local` over Bonjour, through the Mac's own
+  mDNSResponder.
+- **Which IP.** It uses the Wi-Fi or Ethernet address (never a VPN tunnel's) and follows IP changes.
+- **Access.** While LAN mode is on, anyone on the network can open your servers. Without it,
+  the proxy only answers this Mac.
+- **Where it works.** iOS and macOS resolve `.local` names natively. Networks that keep
+  devices apart (many guest and office Wi-Fi networks) block it.
+- **Plain HTTP.** Phone browsers turn off features that need a secure context, such as service
+  workers and the camera. Use a tunnel when you need those.
 
-- **Announcing names.** The proxy announces each name through the Mac's own
-  mDNSResponder, running one `dns-sd -P` process per server.
-- **Staying in sync.** Every 5 seconds it updates the names from the config and
-  re-announces them if the Mac's IP changes.
-- **Which IP.** It announces the Wi-Fi or Ethernet (`en*`) address and never a
-  VPN tunnel address.
-- **Access control.** Once LAN mode is on, anyone on the network can reach your
-  servers. `homebase lan off` withdraws the names and goes back to accepting
-  connections from this Mac only.
-- **Where it works.** iOS and macOS resolve `.local` names natively. It won't work
-  on Wi-Fi networks that isolate clients from each other (many guest and office networks).
-- **Plain HTTP.** These are `http://` URLs, so phone browsers turn off features that
-  need a secure context: service workers, camera and microphone, and some others.
+### From anywhere (`--tunnel`)
 
-## Sharing over the internet (Cloudflare Tunnel, optional)
-
-You can publish chosen servers at `https://<name>.<your-domain>`. They're reachable from
-your phone on mobile data, by a colleague anywhere, or by a mobile app talking to its
-backend. Nothing is shared until you run `homebase share`. A shared server is public:
-anyone with the URL can open it. Add `--private` to require a secret token.
-
-```
-browser ── https://my-app.example.com ──▶ Cloudflare ──tunnel──▶ cloudflared (on your Mac)
-        ──▶ homebase proxy (127.0.0.1:8780, checks access) ──▶ my-app on localhost:4000
-```
-
-### What you need
-
-- A domain whose DNS is managed by Cloudflare. The free plan is enough.
-- The homebase proxy running (`homebase proxy install`).
-
-### Setup (once)
+You need a domain whose DNS is managed by Cloudflare. The free plan is enough.
 
 ```sh
 brew install cloudflared
-cloudflared tunnel login              # opens a browser: pick your domain
-homebase tunnel setup example.com     # creates the tunnel "homebase" and starts it
+cloudflared tunnel login                  # once, in the browser: pick your domain
+homebase init --tunnel example.com        # creates the tunnel "homebase" and runs it
+cd my-app && homebase share               # → https://my-app.example.com
 ```
 
-`tunnel setup` does three things:
-- creates a Cloudflare tunnel named `homebase`, with its credentials stored in `~/.cloudflared`;
-- writes `~/.config/homebase/cloudflared.yml`;
-- runs `cloudflared` as a launch agent, so it survives reboots like everything else.
+```
+browser ── https://my-app.example.com ──▶ Cloudflare ──tunnel──▶ cloudflared (your Mac)
+        ──▶ homebase proxy (127.0.0.1:8780) ──▶ my-app on localhost:4001
+```
 
-### Sharing a server
+Nothing is reachable until you `share` it. For everything else, the proxy answers 404.
+
+- **Public by default.** That's the right choice for backends with their own login, mobile
+  apps and webhooks.
+- **`homebase share --private`** requires a secret token:
+  - **Browsers:** open the printed link once per browser; it sets a cookie.
+  - **Apps and scripts:** send the token in an `X-Homebase-Token` header.
+  - **Your app never sees the token.**
+  - `--new-token` replaces the token, and `--public` opens the server up again.
+  - For real logins, put [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-apps/)
+    in front of a public share.
+- **`homebase unshare`** makes the URL return 404. The DNS record stays in Cloudflare,
+  because cloudflared can't delete records.
+- **DNS.**
+  - `share` never overwrites an existing record.
+  - A wildcard record (`*.example.com`) doesn't block it, though, so the name stops going
+    wherever the wildcard pointed. `share` warns you when that happens.
+  - Cloudflare's free certificate covers one level of subdomain: `my-app.example.com` works,
+    but `my-app.dev.example.com` needs Advanced Certificate Manager.
+- **What the app sees:**
+  - `Host: my-app.localhost`, so dev servers' host checks pass;
+  - the public host in `X-Forwarded-Host`, and `X-Forwarded-Proto: https`;
+  - the visitor's IP in `X-Forwarded-For`.
+- **Cloudflare's limits:** requests time out after 100 seconds, and uploads are capped at 100 MB.
+
+## Using homebase with AI agents
+
+Tell your agent *"run this with homebase"*. It will read `homebase --help` and then
+`homebase docs`, which is the full guide plus a plan for the current folder. The plan covers
+the detected command, any missing dependencies, and whether a server is already running.
+Then the agent starts the server.
+
+To make every agent session on your Mac know about homebase without being told:
 
 ```sh
-homebase share my-app                 # public: anyone with the URL can open it
-homebase share my-app --private       # requires a token; prints a link that contains it
-homebase share my-app --new-token     # replace the token; old links stop working
-homebase share my-app --public        # make a private share public again
-homebase unshare my-app               # stop sharing; the URL returns 404
-homebase tunnel status                # what is shared, and how
+homebase agents install   # Claude Code (as a skill), Codex, OpenCode, Gemini CLI
 ```
 
-`share` creates a DNS record `my-app.example.com` that points to the tunnel. It won't
-overwrite a record that already exists, so your real sites on the same domain are safe. The exception is a
-wildcard record (`*.example.com`): it doesn't block the new record, so the shared name
-stops going wherever the wildcard points. `share` warns when the name already resolved
-somewhere before you shared it.
+This adds a short, clearly marked note to each agent's global instructions.
+`homebase agents uninstall` removes it.
 
-Running `share` again without a flag keeps the server's current mode, so a private share stays private.
+For scripts and agents, every command takes `--json`:
+- **Output:** stdout is exactly one object, either `{"ok":true,"data":…}` or
+  `{"ok":false,"error":{"code","message","hint","logs"}}`.
+- **Exit codes:** they depend on the kind of error; `homebase docs` lists them.
+- **Waiting:** starting a server waits until its port is open, so a single command tells
+  you whether it works.
 
-### Private shares (`--private`)
+## Commands
 
-Public is the right default when the server has its own login, or when outside services
-call it (webhooks, push callbacks). For anything else that shouldn't be open to the
-internet, such as a demo, an admin panel, or test data, use `--private`.
+| Command | What it does |
+|---|---|
+| `homebase [dir]` | Detect, start and wait for the project's server (`--start`, `--port`, `--env`, `--no-save`, `--timeout`). Same as `homebase start` |
+| `homebase status` / `ls` | One server in detail / every server plus the machine setup |
+| `homebase logs [-f] [-n 50]` | The server's output. `logs proxy` and `logs tunnel` show homebase's own |
+| `homebase open` | Open it in the browser |
+| `homebase restart` / `stop` | Restart, re-reading homebase.toml / stop. `--all` for every server |
+| `homebase forget` | Stop the server and remove it from homebase. The project's files are not touched |
+| `homebase share [--private]` / `unshare` | Publish at `https://<name>.<domain>` / stop publishing |
+| `homebase init [--lan] [--tunnel DOMAIN]` | Set up this Mac. Safe to run again |
+| `homebase uninstall` | Stop everything homebase runs (do this before `brew uninstall`). Settings are kept |
+| `homebase agents install\|uninstall\|status` | Tell the coding agents on this Mac about homebase |
+| `homebase docs` | The full guide, plus a plan for the current folder |
 
-- **The share link.** It looks like `https://my-app.example.com/?homebase_token=…`.
-- **First visit.** The proxy swaps the token for a cookie that lasts one year and removes the
-  token from the address bar. After that, the plain URL works in that browser.
-- **Without the token or cookie.** The proxy answers 401.
-- **Scripts and apps.** Send the token in an `X-Homebase-Token` header instead. In a mobile app,
-  add the header in a request interceptor in debug builds only.
-- **Your app never sees the token.** The proxy strips both the cookie and the header before
-  passing the request on.
+Global flags: `--json`, `-a/--app NAME`.
 
-Treat the link like a password: anyone who has it gets in. Run `--new-token` if it leaks.
-If you need real logins (email codes, Google, etc.), keep the share public and put
-[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/self-hosted-apps/)
-in front of the hostname. Access is free for up to 50 users.
+## How it works
 
-### Good to know
+| What | Where |
+|---|---|
+| A server | launch agent `~/Library/LaunchAgents/dev.homebase.server.<name>.plist`, running `zsh -lc "<start>"` in the project folder with `PORT` set |
+| Its output | `~/Library/Logs/homebase/<name>.log` |
+| The proxy and the tunnel | launch agents `dev.homebase.proxy` and `dev.homebase.tunnel`, with logs in `proxy.log` and `tunnel.log` |
+| Registry: folders, ports, shares | `~/.config/homebase/servers.yaml` (mode 0600; `$HOMEBASE_CONFIG` overrides the path) |
+| Per-project settings | `homebase.toml`, meant to be committed |
 
-- **One subdomain level.** Cloudflare's free certificate covers `my-app.example.com` but not
-  `my-app.dev.example.com`. Deeper names need Advanced Certificate Manager.
-- **Host header.** Your server receives `Host: my-app.localhost`, so dev servers like Vite
-  that check the Host header accept the request. The public host comes in `X-Forwarded-Host`,
-  with `X-Forwarded-Proto: https`.
-- **WebSockets** (hot reload) work through the tunnel.
-- **Unsharing leaves the DNS record behind.** `unshare` turns the URL into a 404. The record
-  itself stays in Cloudflare, because cloudflared can't delete records. Remove it in the
-  dashboard if you want it gone.
-- **Removing the tunnel.** `homebase tunnel uninstall` stops the tunnel on this Mac. To delete
-  the tunnel in Cloudflare as well, run `cloudflared tunnel delete homebase`.
-- **Logs.** `homebase logs tunnel` shows the tunnel's log.
-- **The Mac must be awake and online** for anything to be reachable.
+launchd restarts a server after a crash. `stop` disables the server's launch agent, so
+stopped servers stay stopped after a reboot and running ones come back.
+
+## Development
+
+```sh
+make build                    # dist/homebase
+make release VERSION=x.y.z    # archives for the Homebrew cask in dist/release
+```
+
+- `internal/cli`: commands and output
+- `internal/detect`: how to start a project
+- `internal/launchd`, `internal/proxy`, `internal/bonjour`, `internal/cloudflared`: the machinery
+- `internal/config`: the registry and homebase.toml
+
+## License
+
+[MIT](LICENSE)

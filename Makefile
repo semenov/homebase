@@ -1,5 +1,5 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS = -s -w -X main.version=$(VERSION)
+LDFLAGS = -s -w -X github.com/semenov/homebase/internal/cli.Version=$(VERSION)
 
 .PHONY: build install test clean release
 
