@@ -157,6 +157,19 @@ func (u *UI) Hint(text, cmd string) {
 	u.blank = true
 }
 
+// Bullet prints a wrapped list item: "    ! text".
+func (u *UI) Bullet(mark, text string) {
+	lines := strings.Split(strings.TrimRight(wrapDim(palette{}, text, ""), "\n"), "\n")
+	for i, l := range lines {
+		lead := "      "
+		if i == 0 {
+			lead = "    " + mark + " "
+		}
+		u.printf("%s%s\n", lead, l)
+	}
+	u.blank = false
+}
+
 func (u *UI) Line(s string) {
 	u.printf("%s\n", s)
 	u.blank = false
@@ -197,6 +210,25 @@ var errPalette = newPalette(os.Stderr)
 // step reports progress on stderr, so stdout stays a clean result.
 func step(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "  %s %s\n", errPalette.blue("→"), fmt.Sprintf(format, a...))
+}
+
+// detail adds a line under the current step on stderr.
+func detail(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "    %s\n", errPalette.dim(fmt.Sprintf(format, a...)))
+}
+
+// dimWriter shows a tool's output (docker build) greyed out on stderr, so
+// homebase's own steps stand out.
+type dimWriter struct{}
+
+func (dimWriter) Write(b []byte) (int, error) {
+	if !errPalette.on {
+		return os.Stderr.Write(b)
+	}
+	os.Stderr.Write([]byte("\033[2m"))
+	os.Stderr.Write(b)
+	os.Stderr.Write([]byte("\033[0m"))
+	return len(b), nil
 }
 
 // Spinner shows that something is happening while we wait. It is silent

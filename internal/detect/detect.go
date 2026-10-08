@@ -1,5 +1,5 @@
-// Package detect works out how to start a project's dev server so that it
-// listens on $PORT.
+// Package detect works out how to run a project: Detect finds the command
+// that starts its dev server on $PORT, Build how to build its production image.
 package detect
 
 import (
@@ -82,15 +82,7 @@ func node(dir string) *Result {
 	}
 	json.Unmarshal([]byte(raw), &pkg)
 
-	pm := "npm"
-	switch {
-	case exists(filepath.Join(dir, "pnpm-lock.yaml")):
-		pm = "pnpm"
-	case exists(filepath.Join(dir, "yarn.lock")):
-		pm = "yarn"
-	case exists(filepath.Join(dir, "bun.lock")), exists(filepath.Join(dir, "bun.lockb")):
-		pm = "bun"
-	}
+	pm := packageManager(dir)
 	r := &Result{Stack: "Node.js"}
 	if !nodeModulesFound(dir) {
 		r.Install = pm + " install"
@@ -138,6 +130,19 @@ func node(dir string) *Result {
 	}
 	r.Command = run
 	return r
+}
+
+// packageManager picks npm, pnpm, yarn or bun from the lockfile.
+func packageManager(dir string) string {
+	switch {
+	case exists(filepath.Join(dir, "pnpm-lock.yaml")):
+		return "pnpm"
+	case exists(filepath.Join(dir, "yarn.lock")):
+		return "yarn"
+	case exists(filepath.Join(dir, "bun.lock")), exists(filepath.Join(dir, "bun.lockb")):
+		return "bun"
+	}
+	return "npm"
 }
 
 // nodeModulesFound looks in dir and its parents (workspaces hoist

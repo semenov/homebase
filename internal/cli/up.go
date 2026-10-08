@@ -64,6 +64,9 @@ func isProject(cfg *config.Config) bool {
 }
 
 func runUp(arg string, o upOpts) error {
+	if err := macOnly(); err != nil {
+		return err
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -161,7 +164,7 @@ func runUp(arg string, o upOpts) error {
 	// Remember explicit choices in homebase.toml, so the next run (or a
 	// teammate, or an agent) needs no flags.
 	if !o.noSave {
-		changed := firstRun
+		changed := firstRun || proj.FromShip
 		if flagApp != "" && proj.Name != flagApp || proj.Name == "" {
 			proj.Name, changed = name, true
 		}
@@ -175,12 +178,15 @@ func runUp(arg string, o upOpts) error {
 			proj.Env, changed = env, true
 		}
 		if changed {
+			verb := "Updated"
+			switch {
+			case firstRun:
+				verb = "Wrote"
+			case proj.FromShip:
+				verb = "Moved ship.toml into"
+			}
 			if err := proj.Save(dir); err != nil {
 				return errf(CodeConfig, "", "write %s: %v", config.ProjectFile, err)
-			}
-			verb := "Updated"
-			if firstRun {
-				verb = "Wrote"
 			}
 			step("%s %s %s", verb, config.ProjectFile, errPalette.dim("(commit it: anyone can now run `homebase` here)"))
 		}
@@ -314,7 +320,7 @@ func nameFromDir(dir string) (string, error) {
 		name = strings.TrimRight(name[:63], "-")
 	}
 	if name == "" {
-		return "", errf(CodeUsage, "pass one with -a NAME", "can't make a server name from the folder name")
+		return "", errf(CodeUsage, "pass one with -a NAME", "can't make a project name from the folder name")
 	}
 	return name, nil
 }

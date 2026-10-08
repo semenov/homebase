@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
-
-	"github.com/semenov/homebase/internal/config"
 )
 
 // TokenParam and TokenCookie carry the secret of a private share: the link
@@ -19,21 +17,17 @@ const (
 	tokenHeader = "X-Homebase-Token"
 )
 
-// serveTunnel handles traffic from cloudflared. It listens on loopback only,
-// so every request here came through Cloudflare from the internet.
-func (p *Proxy) serveTunnel(w http.ResponseWriter, r *http.Request) {
+// serveShared handles traffic for shared servers. It listens on loopback
+// only and gets requests from the server's proxy through the Mac's reverse
+// SSH tunnel, with the public host (<name>.<dev domain>) in Host.
+func (p *Proxy) serveShared(w http.ResponseWriter, r *http.Request) {
 	cfg := p.config()
 	host := strings.ToLower(r.Host)
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	var name string
-	var srv *config.Server
-	if cfg.Tunnel != nil {
-		if n, ok := strings.CutSuffix(host, "."+cfg.Tunnel.Domain); ok {
-			name, srv = n, cfg.Servers[n]
-		}
-	}
+	name, _, _ := strings.Cut(host, ".")
+	srv := cfg.Servers[name]
 	if srv == nil || srv.Share == nil {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
@@ -72,7 +66,9 @@ func (p *Proxy) serveTunnel(w http.ResponseWriter, r *http.Request) {
 		pr.Out.Host = name + ".localhost"
 		pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
 		pr.Out.Header.Set("X-Forwarded-Proto", "https")
-		if ip := pr.In.Header.Get("Cf-Connecting-Ip"); ip != "" {
+		// The server's proxy put the visitor's address here; the tunnel's
+		// own address (127.0.0.1) says nothing.
+		if ip := pr.In.Header.Get("X-Forwarded-For"); ip != "" {
 			pr.Out.Header.Set("X-Forwarded-For", ip)
 		}
 		pr.Out.Header.Del(tokenHeader)

@@ -6,52 +6,27 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/semenov/homebase/internal/proto"
 )
 
-// Error codes are stable: agents may branch on them.
+// Error is what every command fails with; see proto for the codes.
+type Error = proto.Error
+
 const (
-	CodeUsage        = "usage"
-	CodeConfig       = "config"
-	CodeStackUnknown = "stack_not_detected"
-	CodeDepsMissing  = "dependencies_missing"
-	CodePortInUse    = "port_in_use"
-	CodeStartFailed  = "start_failed"  // the process exited while starting
-	CodeNotListening = "not_listening" // running, but the port never opened
-	CodeLaunchd      = "launchd_failed"
-	CodeCloudflare   = "cloudflare_failed"
-	CodeNotFound     = "server_not_found"
-	CodeInternal     = "internal"
+	CodeUsage        = proto.CodeUsage
+	CodeConfig       = proto.CodeConfig
+	CodeStackUnknown = proto.CodeStackUnknown
+	CodeDepsMissing  = proto.CodeDepsMissing
+	CodePortInUse    = proto.CodePortInUse
+	CodeStartFailed  = proto.CodeStartFailed
+	CodeNotListening = proto.CodeNotListening
+	CodeLaunchd      = proto.CodeLaunchd
+	CodeNotFound     = proto.CodeServerNotFound
+	CodeInternal     = proto.CodeInternal
 )
 
-// ExitCode maps error codes to process exit codes.
-func ExitCode(code string) int {
-	switch code {
-	case CodeUsage:
-		return 2
-	case CodeConfig, CodeStackUnknown, CodeDepsMissing:
-		return 3
-	case CodePortInUse, CodeStartFailed, CodeNotListening, CodeLaunchd:
-		return 5
-	case CodeCloudflare:
-		return 6
-	case CodeNotFound:
-		return 7
-	}
-	return 1
-}
-
-type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Hint    string `json:"hint,omitempty"`
-	Logs    string `json:"logs,omitempty"`
-}
-
-func (e *Error) Error() string { return e.Message }
-
-func errf(code, hint, format string, a ...any) *Error {
-	return &Error{Code: code, Message: fmt.Sprintf(format, a...), Hint: hint}
-}
+func errf(code, hint, format string, a ...any) *Error { return proto.Errf(code, hint, format, a...) }
 
 var jsonOut bool
 
@@ -86,7 +61,7 @@ func fail(err error) int {
 	}
 	if jsonOut {
 		writeJSON(response{OK: false, Error: e})
-		return ExitCode(e.Code)
+		return proto.ExitCode(e.Code)
 	}
 	p := errPalette
 	fmt.Fprintf(os.Stderr, "\n  %s %s  %s\n", p.red("✗"), p.bold(e.Message), p.dim("["+e.Code+"]"))
@@ -100,5 +75,5 @@ func fail(err error) int {
 		fmt.Fprintf(os.Stderr, "\n%s", wrapDim(p, e.Hint, "    "))
 	}
 	fmt.Fprintln(os.Stderr)
-	return ExitCode(e.Code)
+	return proto.ExitCode(e.Code)
 }

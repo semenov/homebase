@@ -13,16 +13,17 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 )
 
 const (
 	DefaultProxyPort = 80
 	DefaultDomain    = "localhost"
-	// DefaultTunnelPort is the loopback port where the proxy receives
-	// traffic from cloudflared.
-	DefaultTunnelPort = 8780
-	firstAutoPort     = 4000
+	// DefaultSharePort is the loopback port where the proxy receives shared
+	// traffic, through the tunnel from the server.
+	DefaultSharePort = 8780
+	firstAutoPort    = 4000
 )
 
 type Proxy struct {
@@ -33,18 +34,30 @@ type Proxy struct {
 	// interfaces (macOS only allows :80 without root that way), so without
 	// this it rejects non-loopback clients.
 	LAN bool `yaml:"lan,omitempty"`
+	// SharePort receives shared traffic on 127.0.0.1 (DefaultSharePort).
+	SharePort int `yaml:"share_port,omitempty"`
 }
 
-// Tunnel is the optional Cloudflare Tunnel that publishes shared servers
-// at https://<name>.<Domain>.
-type Tunnel struct {
+// Remote is the user's own server: deploys go there, and shared dev servers
+// are published through it at https://<name>.<DevDomain>.
+type Remote struct {
+	Host string `yaml:"host"` // ssh target, user@host
+	// MacID names this Mac on the server; it owns the Mac's shares.
+	MacID string `yaml:"mac_id,omitempty"`
+	// Domain and DevDomain are cached from the server for display.
+	Domain    string `yaml:"domain,omitempty"`
+	DevDomain string `yaml:"dev_domain,omitempty"`
+}
+
+// LegacyTunnel is the Cloudflare Tunnel older versions published shares
+// through. It is only read, so that `homebase init` can remove it.
+type LegacyTunnel struct {
 	Name   string `yaml:"name"`
 	ID     string `yaml:"id"`
 	Domain string `yaml:"domain"`
-	Port   int    `yaml:"port"`
 }
 
-// Share marks a server as published through the tunnel. Shares are public
+// Share marks a server as published through the server. Shares are public
 // by default; private ones (Public false) only open with Token.
 type Share struct {
 	Public bool   `yaml:"public,omitempty"`
@@ -61,7 +74,8 @@ type Server struct {
 
 type Config struct {
 	Proxy   Proxy              `yaml:"proxy"`
-	Tunnel  *Tunnel            `yaml:"tunnel,omitempty"`
+	Remote  *Remote            `yaml:"server,omitempty"`
+	Tunnel  *LegacyTunnel      `yaml:"tunnel,omitempty"`
 	Servers map[string]*Server `yaml:"servers"`
 }
 
@@ -103,13 +117,33 @@ func Load() (*Config, error) {
 	if c.Proxy.Domain == "" {
 		c.Proxy.Domain = DefaultDomain
 	}
+	if c.Proxy.SharePort == 0 {
+		c.Proxy.SharePort = DefaultSharePort
+	}
 	if c.Servers == nil {
 		c.Servers = map[string]*Server{}
 	}
-	if c.Tunnel != nil && c.Tunnel.Port == 0 {
-		c.Tunnel.Port = DefaultTunnelPort
+	if c.Remote == nil {
+		if host := shipDefaultServer(); host != "" {
+			c.Remote = &Remote{Host: host}
+		}
 	}
 	return c, nil
+}
+
+// shipDefaultServer reads the default server of ship, which homebase replaced,
+// so that its users don't have to add the server again.
+func shipDefaultServer() string {
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".config")
+	}
+	var g struct {
+		DefaultServer string `toml:"default_server"`
+	}
+	toml.DecodeFile(filepath.Join(dir, "ship", "config.toml"), &g)
+	return g.DefaultServer
 }
 
 func (c *Config) Save() error {
@@ -148,7 +182,7 @@ func (c *Config) Get(name string) (*Server, error) {
 // FreePort returns the lowest port >= 4000 that is neither assigned to
 // another server nor currently accepting connections.
 func (c *Config) FreePort() int {
-	used := map[int]bool{c.Proxy.Port: true, DefaultTunnelPort: true}
+	used := map[int]bool{c.Proxy.Port: true, c.Proxy.SharePort: true}
 	for _, s := range c.Servers {
 		used[s.Port] = true
 	}
@@ -165,12 +199,12 @@ func (c *Config) URL(name string) string { return c.url(name + "." + c.Proxy.Dom
 // LANURL is the address other devices use, e.g. http://api.local.
 func (c *Config) LANURL(name string) string { return c.url(name + ".local") }
 
-// PublicURL is the tunnel address of a server, or "" without a tunnel.
+// PublicURL is the shared address of a server, or "" without a server.
 func (c *Config) PublicURL(name string) string {
-	if c.Tunnel == nil {
+	if c.Remote == nil || c.Remote.DevDomain == "" {
 		return ""
 	}
-	return "https://" + name + "." + c.Tunnel.Domain
+	return "https://" + name + "." + c.Remote.DevDomain
 }
 
 func (c *Config) url(host string) string {

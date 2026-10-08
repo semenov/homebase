@@ -24,15 +24,24 @@ const (
 // agentBlock goes into agents' global instruction files. It stays short and
 // defers to `homebase docs`, so it does not go stale when homebase is updated.
 const agentBlock = blockStart + `
-## Running dev servers: use homebase
+## Dev servers and deploys: use homebase
 
 To run a project's dev server on this Mac, use the ` + "`homebase`" + ` CLI instead of starting
 it in the background yourself (` + "`npm run dev &`" + `): it keeps running after your session,
-restarts on crashes, logs to a file and gets a stable URL.
+restarts on crashes, logs to a file and gets a stable URL. To deploy a web app to the
+user's own server, use ` + "`homebase deploy`" + ` instead of manual ssh/docker/nginx work.
 Run ` + "`homebase docs`" + ` first: it is the full guide plus a plan for the current project.
-Start with ` + "`homebase --json`" + ` in the project folder, check with ` + "`homebase status --json`" + `.
-Never run ` + "`homebase share`" + `, ` + "`init`" + ` or ` + "`uninstall`" + ` unless the user asks.
+Dev server: ` + "`homebase --json`" + ` in the project folder, check with ` + "`homebase status --json`" + `.
+Deploy: ` + "`homebase deploy --json`" + `, verify with ` + "`homebase status --prod --json`" + `.
+Never run ` + "`homebase share`" + `, ` + "`init`" + `, ` + "`uninstall`" + ` or ` + "`destroy --data`" + ` unless the user asks.
 ` + blockEnd + "\n"
+
+// ship, which homebase replaced, installed its own notes; install removes them.
+const (
+	shipBlockStart = "<!-- ship:start -->"
+	shipBlockEnd   = "<!-- ship:end -->"
+	shipSkillMark  = "managed by `ship agents`"
+)
 
 // agentTarget is one coding agent whose global instructions homebase can extend.
 type agentTarget struct {
@@ -96,16 +105,18 @@ func (t *agentTarget) check() string {
 }
 
 // findBlock returns homebase's marked block (including a trailing newline) if present.
-func findBlock(s string) (string, bool) {
-	i := strings.Index(s, blockStart)
+func findBlock(s string) (string, bool) { return findMarked(s, blockStart, blockEnd) }
+
+func findMarked(s, start, stop string) (string, bool) {
+	i := strings.Index(s, start)
 	if i < 0 {
 		return "", false
 	}
-	j := strings.Index(s[i:], blockEnd)
+	j := strings.Index(s[i:], stop)
 	if j < 0 {
 		return "", false
 	}
-	end := i + j + len(blockEnd)
+	end := i + j + len(stop)
 	if end < len(s) && s[end] == '\n' {
 		end++
 	}
@@ -113,6 +124,9 @@ func findBlock(s string) (string, bool) {
 }
 
 func (t *agentTarget) install() error {
+	if err := t.removeShip(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(t.Path), 0o755); err != nil {
 		return err
 	}
@@ -136,6 +150,30 @@ func (t *agentTarget) install() error {
 		s += agentBlock
 	}
 	return os.WriteFile(t.Path, []byte(s), 0o644)
+}
+
+// removeShip removes the note of ship, whose commands are now homebase's.
+func (t *agentTarget) removeShip() error {
+	if t.Skill {
+		dir := filepath.Join(filepath.Dir(filepath.Dir(t.Path)), "ship")
+		if b, err := os.ReadFile(filepath.Join(dir, "SKILL.md")); err == nil && strings.Contains(string(b), shipSkillMark) {
+			return os.RemoveAll(dir)
+		}
+		return nil
+	}
+	b, err := os.ReadFile(t.Path)
+	if err != nil {
+		return nil
+	}
+	block, ok := findMarked(string(b), shipBlockStart, shipBlockEnd)
+	if !ok {
+		return nil
+	}
+	s := strings.TrimSpace(strings.Replace(string(b), block, "", 1))
+	if s == "" {
+		return os.Remove(t.Path)
+	}
+	return os.WriteFile(t.Path, []byte(s+"\n"), 0o644)
 }
 
 func (t *agentTarget) uninstall() error {
@@ -167,10 +205,11 @@ func (t *agentTarget) uninstall() error {
 func agentsCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "agents",
-		Short: "Tell the coding agents on this Mac (Claude Code, Codex, ...) to run dev servers with homebase",
+		Short: "Tell the coding agents on this machine (Claude Code, Codex, ...) about homebase",
 		Long: `Adds a short note to the global instructions of the coding agents installed on
-this machine, so that any new agent session knows to run dev servers with homebase and to
-start with ` + "`homebase docs`" + `. Supported: Claude Code (as a skill), Codex, OpenCode, Gemini CLI.
+this machine, so that any new agent session knows to run dev servers and deploy with
+homebase and to start with ` + "`homebase docs`" + `. Supported: Claude Code (as a skill), Codex,
+OpenCode, Gemini CLI. Notes left by ship, which homebase replaced, are removed.
 
   homebase agents status               where homebase is registered
   homebase agents install [agent...]   register with all detected agents (or the named ones)
@@ -244,7 +283,7 @@ start with ` + "`homebase docs`" + `. Supported: Claude Code (as a skill), Codex
 			if len(done) == 0 {
 				return errf(CodeConfig, "supported: Claude Code, Codex, OpenCode, Gemini CLI", "no supported coding agents found on this machine")
 			}
-			report(done, "New agent sessions will now run dev servers with homebase. Undo with `homebase agents uninstall`.")
+			report(done, "New agent sessions will now run dev servers and deploy with homebase. Undo with `homebase agents uninstall`.")
 			return nil
 		},
 	}

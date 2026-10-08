@@ -1,6 +1,7 @@
-// homebase runs local dev servers on macOS as launchd agents and gives them
-// URLs: http://<name>.localhost, http://<name>.local and, when shared,
-// https://<name>.<domain> through a Cloudflare Tunnel.
+// homebase runs your projects: dev servers on macOS as launchd agents with
+// URLs (http://<name>.localhost, http://<name>.local and, when shared,
+// https://<name>.dev.<domain> through your server), and zero-downtime Docker
+// deploys to your own server over SSH (https://<name>.<domain>).
 package main
 
 import (

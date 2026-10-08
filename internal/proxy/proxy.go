@@ -62,15 +62,13 @@ func Run() error {
 	}
 	log.Printf("homebase proxy listening on %s (*.%s)", addr, cfg.Proxy.Domain)
 
-	if cfg.Tunnel != nil {
-		taddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.Tunnel.Port))
-		tln, err := net.Listen("tcp", taddr)
-		if err != nil {
-			return fmt.Errorf("tunnel listener: %w", err)
-		}
-		log.Printf("tunnel listener on %s (*.%s)", taddr, cfg.Tunnel.Domain)
-		go func() { log.Fatal(http.Serve(tln, http.HandlerFunc(p.serveTunnel))) }()
+	saddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.Proxy.SharePort))
+	sln, err := net.Listen("tcp", saddr)
+	if err != nil {
+		return fmt.Errorf("share listener: %w", err)
 	}
+	log.Printf("share listener on %s", saddr)
+	go func() { log.Fatal(http.Serve(sln, http.HandlerFunc(p.serveShared))) }()
 
 	pub := bonjour.NewPublisher()
 	go p.announce(pub)
@@ -115,7 +113,7 @@ func (p *Proxy) announce(pub *bonjour.Publisher) {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cfg := p.config()
 	if !cfg.Proxy.LAN && !isLoopback(r.RemoteAddr) {
-		http.Error(w, "homebase: LAN access is off (homebase lan on)", http.StatusForbidden)
+		http.Error(w, "homebase: LAN access is off (turn it on with `homebase init --lan`)", http.StatusForbidden)
 		return
 	}
 
@@ -178,7 +176,7 @@ var indexTmpl = template.Must(template.New("index").Parse(`<!doctype html>
 <style>body{font:15px -apple-system,sans-serif;margin:40px}td{padding:4px 16px 4px 0}</style>
 <h1>homebase</h1>
 {{if .}}<table>{{range .}}<tr><td><a href="{{.URL}}">{{.Name}}</a></td><td>:{{.Port}}</td><td>{{.Command}}</td></tr>{{end}}</table>
-{{else}}<p>No servers yet. Add one with <code>homebase add</code>.</p>{{end}}
+{{else}}<p>No servers yet. Run <code>homebase</code> in a project folder.</p>{{end}}
 `))
 
 func (p *Proxy) index(w http.ResponseWriter, cfg *config.Config, lan bool) {

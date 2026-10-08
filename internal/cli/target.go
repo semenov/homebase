@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -15,12 +16,24 @@ import (
 const (
 	serverLabelPrefix = "dev.homebase.server."
 	proxyLabel        = "dev.homebase.proxy"
-	tunnelLabel       = "dev.homebase.tunnel"
-	tunnelName        = "homebase"
+	// tunnelLabel keeps the SSH tunnel to the server open while servers are
+	// shared. (Older versions ran cloudflared under it.)
+	tunnelLabel = "dev.homebase.tunnel"
 )
 
 // flagApp is the global -a/--app NAME.
 var flagApp string
+
+// macOnly fails on other systems: dev servers run as launchd agents.
+func macOnly() error {
+	if runtime.GOOS != "darwin" {
+		return errf(CodeUsage, "on "+runtime.GOOS+", homebase can deploy (deploy, status --prod, logs --prod, env --prod, db, rollback, server)",
+			"dev servers only run on macOS for now")
+	}
+	return nil
+}
+
+func launchdStatus(name string) launchd.Status { return launchd.Get(serverLabelPrefix + name) }
 
 func loadConfig() (*config.Config, error) {
 	cfg, err := config.Load()
@@ -189,7 +202,7 @@ func info(cfg *config.Config, name string) serverInfo {
 	if cfg.Proxy.LAN {
 		in.LANURL = cfg.LANURL(name)
 	}
-	if s.Share != nil && cfg.Tunnel != nil {
+	if s.Share != nil && cfg.PublicURL(name) != "" {
 		in.PublicURL = cfg.PublicURL(name)
 		in.Shared = shareKind(s.Share)
 		in.ShareLink = shareLink(cfg, name)
@@ -233,10 +246,16 @@ type machineInfo struct {
 		On bool   `json:"on"`
 		IP string `json:"ip,omitempty"`
 	} `json:"lan"`
-	Tunnel *struct {
-		Running bool   `json:"running"`
-		Domain  string `json:"domain"`
-	} `json:"tunnel,omitempty"`
+	Server *machineServer `json:"server,omitempty"`
+}
+
+// machineServer is the server this Mac deploys to and shares through.
+type machineServer struct {
+	Host      string `json:"host"`
+	Domain    string `json:"domain,omitempty"`     // apps: <name>.<domain>
+	DevDomain string `json:"dev_domain,omitempty"` // shares: <name>.<dev_domain>
+	Shares    int    `json:"shares"`
+	Tunnel    bool   `json:"tunnel"` // the tunnel for shares runs
 }
 
 func machine(cfg *config.Config) machineInfo {
@@ -248,11 +267,9 @@ func machine(cfg *config.Config) machineInfo {
 			m.LAN.IP = ip.String()
 		}
 	}
-	if cfg.Tunnel != nil {
-		m.Tunnel = &struct {
-			Running bool   `json:"running"`
-			Domain  string `json:"domain"`
-		}{launchd.Get(tunnelLabel).Running, cfg.Tunnel.Domain}
+	if r := cfg.Remote; r != nil {
+		m.Server = &machineServer{Host: r.Host, Domain: r.Domain, DevDomain: r.DevDomain,
+			Shares: len(sharedNames(cfg)), Tunnel: launchd.Get(tunnelLabel).Running}
 	}
 	return m
 }
