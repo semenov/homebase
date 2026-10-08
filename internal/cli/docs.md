@@ -130,7 +130,8 @@ DNS is not touched (the wildcard record covers it). Public by default; --private
 a secret token (a link that sets a cookie, or an X-Homebase-Token header). The app sees
 Host <name>.localhost (so dev servers' host checks pass), the public host in
 X-Forwarded-Host, X-Forwarded-Proto https, and the visitor's IP in X-Forwarded-For.
-While the Mac sleeps, the URL shows an "offline" page.
+While the Mac sleeps, the URL shows an "offline" page (with Caddy; servers that use
+nginx answer 502).
 
 ## homebase.toml
 
@@ -244,7 +245,7 @@ volume_bytes, database_bytes).
     stack_not_detected      3     pass --start '<cmd>' (or add a Dockerfile to deploy)
     dependencies_missing    3     run the install command in the hint
     server_not_ready        3     the server lacks Docker or a proxy: server add --install
-    share_taken             3     another Mac (or an app) has that name: -a NAME
+    share_taken             3     another Mac (or an app) has that name; rename the project
     build_failed            4     docker build failed; see logs
     upload_failed           4     the image didn't reach the server
     port_in_use             5     another program holds the port: --port N

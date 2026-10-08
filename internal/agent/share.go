@@ -158,7 +158,8 @@ func cmdTunnel(args []string) (any, error) {
 // closeStaleTunnel ends the sshd session that still listens on port, if any.
 func closeStaleTunnel(port int) {
 	out, _ := output("ss", "-ltnpH", "sport = :"+strconv.Itoa(port))
-	if m := ssUserRe.FindStringSubmatch(out); m == nil || m[1] != "sshd" {
+	// the session process is "sshd-session" since OpenSSH 9.8
+	if m := ssUserRe.FindStringSubmatch(out); m == nil || !strings.HasPrefix(m[1], "sshd") {
 		return
 	}
 	if m := ssPIDRe.FindStringSubmatch(out); m != nil {
@@ -275,13 +276,13 @@ func shareAdd(cfg *serverConfig, name, mac, macName string) (*proto.Share, error
 	host := name + "." + dev
 	old, err := loadShare(name)
 	if err == nil && old.Mac != mac {
-		return nil, proto.Errf(proto.CodeShareTaken, "pick another name for it (homebase -a NAME share), or unshare it on "+old.MacName,
+		return nil, proto.Errf(proto.CodeShareTaken, "unshare it on "+old.MacName+" first, or rename this project (name in homebase.toml)",
 			"%s is already shared from %s", host, old.MacName)
 	}
 	apps, _ := listApps()
 	for _, a := range apps {
 		if a.Domain == host {
-			return nil, proto.Errf(proto.CodeShareTaken, "pick another name for it (homebase -a NAME share)", "%s is the domain of the deployed app %q", host, a.Name)
+			return nil, proto.Errf(proto.CodeShareTaken, "rename this project (name in homebase.toml)", "%s is the domain of the deployed app %q", host, a.Name)
 		}
 	}
 	sh := &proto.Share{Name: name, Host: host, Mac: mac, MacName: macName, CreatedAt: time.Now().UTC()}
@@ -355,6 +356,27 @@ func routeShare(cfg *serverConfig, sh *proto.Share, port int) ([]string, error) 
 		w += fmt.Sprintf(" (%s; add a DNS record *.%s → %s)", why, strings.TrimPrefix(sh.Host, sh.Name+"."), cfg.PublicIP)
 	}
 	return []string{w}, nil
+}
+
+// rehostShares moves the shares to the current dev domain.
+func rehostShares(cfg *serverConfig) {
+	dev := devDomainOrEmpty(cfg)
+	shares, _ := listShares()
+	tunnels, _ := readTunnels()
+	for _, sh := range shares {
+		t := tunnels[sh.Mac]
+		if dev == "" || t == nil || sh.Host == sh.Name+"."+dev {
+			continue
+		}
+		progress("Moving the share %s to %s.%s", sh.Host, sh.Name, dev)
+		unrouteShare(cfg, sh)
+		sh.Host, sh.CertByShip = sh.Name+"."+dev, false
+		if _, err := routeShare(cfg, sh, t.Port); err != nil {
+			progress("  failed: %v", err)
+			continue
+		}
+		writeJSON(shareFile(sh.Name), sh)
+	}
 }
 
 func unrouteShare(cfg *serverConfig, sh *proto.Share) error {

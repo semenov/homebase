@@ -89,6 +89,9 @@ func cmdSetup(args []string) (any, error) {
 	if err := writeJSON(serverFile, cfg); err != nil {
 		return nil, err
 	}
+	if old != nil && old.proxy() == cfg.proxy() && devDomainOrEmpty(old) != devDomainOrEmpty(cfg) {
+		rehostShares(cfg)
+	}
 	if old != nil && old.proxy() != cfg.proxy() {
 		progress("Proxy changed from %s to %s", old.proxy(), cfg.proxy())
 		if old.proxy() == proxyNginx {

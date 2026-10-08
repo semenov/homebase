@@ -63,12 +63,13 @@ func Run() error {
 	log.Printf("homebase proxy listening on %s (*.%s)", addr, cfg.Proxy.Domain)
 
 	saddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.Proxy.SharePort))
-	sln, err := net.Listen("tcp", saddr)
-	if err != nil {
-		return fmt.Errorf("share listener: %w", err)
+	// Without it only shares break, so *.localhost keeps working.
+	if sln, err := net.Listen("tcp", saddr); err != nil {
+		log.Printf("share listener: %v (shared servers won't be reachable; set proxy.share_port)", err)
+	} else {
+		log.Printf("share listener on %s", saddr)
+		go func() { log.Fatal(http.Serve(sln, http.HandlerFunc(p.serveShared))) }()
 	}
-	log.Printf("share listener on %s", saddr)
-	go func() { log.Fatal(http.Serve(sln, http.HandlerFunc(p.serveShared))) }()
 
 	pub := bonjour.NewPublisher()
 	go p.announce(pub)

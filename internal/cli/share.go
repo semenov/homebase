@@ -121,9 +121,9 @@ func unpublish(cfg *config.Config, name string) error {
 	return r.Agent(nil, nil, "share", "rm", "--name", name, "--mac", cfg.Remote.MacID)
 }
 
-// ensureTunnel starts the tunnel agent if it doesn't run.
-func ensureTunnel() error {
-	if launchd.Get(tunnelLabel).Running {
+// ensureTunnel starts the tunnel agent if it doesn't run, or restarts it.
+func ensureTunnel(restart bool) error {
+	if launchd.Get(tunnelLabel).Running && !restart {
 		return nil
 	}
 	exe, err := stableExecutable()
@@ -250,7 +250,7 @@ share again without flags keeps the current mode.`,
 			if err := saveConfig(cfg); err != nil {
 				return err
 			}
-			if err := ensureTunnel(); err != nil {
+			if err := ensureTunnel(false); err != nil {
 				return err
 			}
 			in := info(cfg, name)

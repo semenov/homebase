@@ -59,7 +59,7 @@ your own server: see ` + "`homebase server add`" + `.`,
 			}
 			var shareErr error
 			if shared := sharedNames(cfg); len(shared) > 0 {
-				shareErr = republish(cfg, shared, legacy != nil)
+				shareErr = republish(cfg, shared)
 			}
 			if err := saveConfig(cfg); err != nil {
 				return err
@@ -94,29 +94,24 @@ your own server: see ` + "`homebase server add`" + `.`,
 }
 
 // republish makes sure shared servers are reachable: their routes exist on
-// the server (after a move from the Cloudflare tunnel) and the tunnel runs.
-// Without a server they can't be, so they are unshared.
-func republish(cfg *config.Config, names []string, routes bool) error {
+// the server (after a move from the Cloudflare tunnel, or to another server)
+// and the tunnel runs, restarted so that it uses this homebase binary.
+func republish(cfg *config.Config, names []string) error {
 	if cfg.Remote == nil {
-		for _, n := range names {
-			cfg.Servers[n].Share = nil
-		}
-		return errf(CodeConfig, "", "there is no server to share through (homebase server add user@host), so %s are no longer shared", strings.Join(names, ", "))
+		return errf(CodeConfig, "", "there is no server to share %s through: homebase server add user@host", strings.Join(names, ", "))
 	}
 	ensureMacID(cfg)
-	if routes || cfg.Remote.DevDomain == "" {
-		step("Publishing %s through %s", strings.Join(names, ", "), cfg.Remote.Host)
-		r, err := Connect(cfg.Remote.Host)
-		if err != nil {
+	step("Publishing %s through %s", strings.Join(names, ", "), cfg.Remote.Host)
+	r, err := Connect(cfg.Remote.Host)
+	if err != nil {
+		return err
+	}
+	for _, n := range names {
+		if _, err := publish(r, cfg, n); err != nil {
 			return err
 		}
-		for _, n := range names {
-			if _, err := publish(r, cfg, n); err != nil {
-				return err
-			}
-		}
 	}
-	return ensureTunnel()
+	return ensureTunnel(true)
 }
 
 func installProxy() error {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -51,6 +53,21 @@ func (d *Deploy) empty() bool {
 		d.Dockerfile == "" && d.Build == "" && len(d.Volumes) == 0 && d.Release == "" && d.Memory == ""
 }
 
+var nonShipName = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// ShipAppName is the app name ship derived from a folder, kept so that
+// deploys from homebase go to the same app.
+func ShipAppName(dir string) string {
+	n := strings.Trim(nonShipName.ReplaceAllString(strings.ToLower(filepath.Base(dir)), "-"), "-")
+	if len(n) > 42 {
+		n = strings.Trim(n[:42], "-")
+	}
+	if n == "" {
+		n = "app"
+	}
+	return n
+}
+
 // shipProject is the old ship.toml: the deploy settings plus the app name.
 type shipProject struct {
 	Name string `toml:"name"`
@@ -72,7 +89,10 @@ func LoadProject(dir string) (*Project, error) {
 		p = &Project{Name: s.Name}
 	}
 	p.Deploy, p.FromShip = &s.Deploy, true
-	if s.Name != "" && s.Name != p.Name {
+	if s.Name == "" {
+		s.Name = ShipAppName(dir) // what ship deployed it as
+	}
+	if s.Name != p.Name {
 		p.Deploy.Name = s.Name
 	}
 	return p, nil

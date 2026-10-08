@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,7 +61,10 @@ func appName(cfg *config.Config, dir string, proj *config.Project) (string, erro
 		}
 	}
 	if name == "" {
-		return nameFromDir(dir)
+		if name, err := nameFromDir(dir); err != nil || len(name) <= 42 {
+			return name, err
+		}
+		return config.ShipAppName(dir), nil // app names are at most 42 characters
 	}
 	return name, nil
 }
@@ -534,11 +538,17 @@ Caddy is the default proxy (automatic HTTPS). If the server already runs nginx o
 			if err != nil {
 				return err
 			}
+			var shareErr error
 			if !noDefault {
-				if cfg.Remote == nil || cfg.Remote.Host != server {
-					cfg.Remote = &config.Remote{Host: server}
+				if cfg.Remote == nil {
+					cfg.Remote = &config.Remote{}
 				}
-				cfg.Remote.Domain, cfg.Remote.DevDomain = si.BaseDomain, si.DevDomain
+				moved := cfg.Remote.Host != server || cfg.Remote.DevDomain != si.DevDomain
+				cfg.Remote.Host, cfg.Remote.Domain, cfg.Remote.DevDomain = server, si.BaseDomain, si.DevDomain
+				// shares follow the server; the tunnel reconnects to it
+				if shared := sharedNames(cfg); len(shared) > 0 && moved && runtime.GOOS == "darwin" {
+					shareErr = republish(cfg, shared)
+				}
 				if err := saveConfig(cfg); err != nil {
 					return err
 				}
@@ -566,6 +576,9 @@ Caddy is the default proxy (automatic HTTPS). If the server already runs nginx o
 				}
 				if noDefault {
 					u.Para("Not made the default: pass --server %s to use it.", server)
+				}
+				if shareErr != nil {
+					u.Warn("Shared servers are not reachable: %v", shareErr)
 				}
 				u.Hint("Deploy a project with", "cd my-app && homebase deploy")
 			})

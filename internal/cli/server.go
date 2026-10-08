@@ -354,6 +354,9 @@ With --prod: the deployed app's container logs from the server.`,
 					a = append(a, "--since", since)
 				}
 				if err := r.Stream(a...); err != nil {
+					if e := sshError(err, ""); e != err {
+						return e
+					}
 					return proto.Errf(proto.CodeNotFound, "check `homebase status --prod`", "could not read the logs of %q", app)
 				}
 				return nil
