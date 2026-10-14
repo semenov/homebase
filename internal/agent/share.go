@@ -332,15 +332,7 @@ func routeShare(cfg *serverConfig, sh *proto.Share, port int) ([]string, error) 
 		return nil, err
 	}
 	progress("Routing https://%s → this Mac", sh.Host)
-	site := fmt.Sprintf(`# managed by homebase: %s, shared from %s (do not edit)
-%s {
-	reverse_proxy 127.0.0.1:%d
-	handle_errors {
-		respond "%s is offline: the Mac that shares it (%s) is asleep or not connected." 502
-	}
-}
-`, sh.Name, sh.MacName, sh.Host, port, sh.Host, sh.MacName)
-	if err := applyCaddy(caddyConfPath(shareKey(sh.Name)), []byte(site)); err != nil {
+	if err := applySites(caddyConfPath(shareKey(sh.Name)), renderShareSite(sh, port)); err != nil {
 		return nil, err
 	}
 	sh.URL = "https://" + sh.Host
@@ -356,6 +348,16 @@ func routeShare(cfg *serverConfig, sh *proto.Share, port int) ([]string, error) 
 		w += fmt.Sprintf(" (%s; add a DNS record *.%s → %s)", why, strings.TrimPrefix(sh.Host, sh.Name+"."), cfg.PublicIP)
 	}
 	return []string{w}, nil
+}
+
+func renderShareSite(sh *proto.Share, port int) []byte {
+	return []byte(fmt.Sprintf(`# managed by homebase: %s, shared from %s (do not edit)
+%s {
+%s	handle_errors {
+		respond "%s is offline: the Mac that shares it (%s) is asleep or not connected." 502
+	}
+}
+`, sh.Name, sh.MacName, sh.Host, reverseProxy(port), sh.Host, sh.MacName))
 }
 
 // rehostShares moves the shares to the current dev domain.

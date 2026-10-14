@@ -8,7 +8,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/semenov/homebase/internal/proto"
@@ -25,7 +28,93 @@ func caddyConfPath(app string) string {
 }
 
 func renderCaddySite(app, domain string, port int) []byte {
-	return []byte(fmt.Sprintf("# managed by ship: app %s (do not edit, rewritten on every deploy)\n%s {\n\treverse_proxy 127.0.0.1:%d\n}\n", app, domain, port))
+	return []byte(fmt.Sprintf("# managed by homebase: app %s (do not edit, rewritten on every deploy)\n%s {\n%s}\n",
+		app, domain, reverseProxy(port)))
+}
+
+// streamCloseDelay keeps WebSockets and other streams open across a config
+// reload. Every deploy reloads Caddy, which by default closes all upgraded
+// connections of the old config, e.g. every app's WebSockets. Caddy still
+// closes them once the delay is over, so it is long: connections end on their
+// own (or when their app is redeployed, which stops the old container).
+const streamCloseDelay = "24h"
+
+// reverseProxy is the proxy directive of every site homebase writes.
+func reverseProxy(port int) string {
+	if !caddyAtLeast(2, 7) { // stream_close_delay is new in Caddy 2.7
+		return fmt.Sprintf("\treverse_proxy 127.0.0.1:%d\n", port)
+	}
+	return fmt.Sprintf("\treverse_proxy 127.0.0.1:%d {\n\t\tstream_close_delay %s\n\t}\n", port, streamCloseDelay)
+}
+
+var (
+	caddyVersionOnce sync.Once
+	caddyMajor       int
+	caddyMinor       int
+	caddyVersionRe   = regexp.MustCompile(`^v?(\d+)\.(\d+)`)
+)
+
+func caddyAtLeast(major, minor int) bool {
+	caddyVersionOnce.Do(func() {
+		out, _ := output("caddy", "version")
+		if m := caddyVersionRe.FindStringSubmatch(strings.TrimSpace(out)); m != nil {
+			caddyMajor, _ = strconv.Atoi(m[1])
+			caddyMinor, _ = strconv.Atoi(m[2])
+		}
+	})
+	return caddyMajor > major || caddyMajor == major && caddyMinor >= minor
+}
+
+// refreshSites rewrites the files of the other apps and the shares when the
+// way homebase renders them changed (e.g. after an update), so that every
+// site gets the current settings with the next reload. It returns the
+// previous contents, to restore them if Caddy rejects the config.
+func refreshSites(skip string) map[string][]byte {
+	want := map[string][]byte{}
+	apps, _ := listApps()
+	for _, a := range apps {
+		if a.Current != nil && a.Domain != "" {
+			want[caddyConfPath(a.Name)] = renderCaddySite(a.Name, a.Domain, a.Current.HostPort)
+		}
+	}
+	shares, _ := listShares()
+	tunnels, _ := readTunnels()
+	for _, sh := range shares {
+		if t := tunnels[sh.Mac]; t != nil {
+			want[caddyConfPath(shareKey(sh.Name))] = renderShareSite(sh, t.Port)
+		}
+	}
+	prev := map[string][]byte{}
+	for path, content := range want {
+		old, err := os.ReadFile(path)
+		if path == skip || err != nil || bytes.Equal(old, content) {
+			continue // only sites that are routed now
+		}
+		if writeFileAtomic(path, content, 0o644) == nil {
+			prev[path] = old
+		}
+	}
+	return prev
+}
+
+// syncSites applies refreshSites with one reload.
+func syncSites() error {
+	prev := refreshSites("")
+	if len(prev) == 0 {
+		return nil
+	}
+	progress("Updating the proxy config of %d sites", len(prev))
+	if err := reloadCaddy(); err != nil {
+		restore(prev)
+		return err
+	}
+	return nil
+}
+
+func restore(prev map[string][]byte) {
+	for path, b := range prev {
+		writeFileAtomic(path, b, 0o644)
+	}
 }
 
 // ensureCaddyfile makes the main Caddyfile import ship's per-app files. A stock
@@ -73,6 +162,31 @@ func applyCaddy(path string, content []byte) error {
 	return nil
 }
 
+// applySites is applyCaddy that also brings the other sites up to date in the
+// same reload.
+func applySites(path string, content []byte) error {
+	prev := refreshSites(path)
+	cur, err := os.ReadFile(path)
+	if err == nil && bytes.Equal(cur, content) {
+		if len(prev) == 0 {
+			return nil
+		}
+		if err := reloadCaddy(); err != nil {
+			restore(prev)
+			return err
+		}
+		return nil
+	}
+	if err := applyCaddy(path, content); err != nil {
+		restore(prev)
+		if len(prev) > 0 {
+			reloadCaddy()
+		}
+		return err
+	}
+	return nil
+}
+
 func reloadCaddy() error {
 	out, err := combined("caddy", "reload", "--config", caddyfile, "--adapter", "caddyfile")
 	if err != nil {
@@ -86,7 +200,7 @@ func caddyRoute(cfg *serverConfig, a *proto.App, hostPort int) ([]string, error)
 		return nil, err
 	}
 	progress("Routing https://%s → 127.0.0.1:%d", a.Domain, hostPort)
-	if err := applyCaddy(caddyConfPath(a.Name), renderCaddySite(a.Name, a.Domain, hostPort)); err != nil {
+	if err := applySites(caddyConfPath(a.Name), renderCaddySite(a.Name, a.Domain, hostPort)); err != nil {
 		return nil, err
 	}
 	a.URL = "https://" + a.Domain

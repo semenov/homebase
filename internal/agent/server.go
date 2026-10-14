@@ -89,6 +89,11 @@ func cmdSetup(args []string) (any, error) {
 	if err := writeJSON(serverFile, cfg); err != nil {
 		return nil, err
 	}
+	if cfg.proxy() == proxyCaddy {
+		if err := syncSites(); err != nil {
+			return nil, err
+		}
+	}
 	if old != nil && old.proxy() == cfg.proxy() && devDomainOrEmpty(old) != devDomainOrEmpty(cfg) {
 		rehostShares(cfg)
 	}

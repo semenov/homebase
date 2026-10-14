@@ -323,6 +323,9 @@ homebase share ── ssh -R ─────────────────
 | `/etc/caddy/ship/<app>.caddy` | one route per app (and `_dev-<name>.caddy` per share), imported from `/etc/caddy/Caddyfile` |
 | Docker | containers `ship-<app>-<release>`, images `ship/<app>` (current and previous), volumes `ship-<app>-*`, `ship-postgres` |
 
+Every deploy reloads Caddy. The routes homebase writes set `stream_close_delay`, so a reload
+doesn't cut the WebSockets of other apps (Caddy 2.7 and newer).
+
 The names on the server come from ship, homebase's deploy half before the two merged; servers
 set up by ship keep working as they are. If a server already runs nginx on port 443, homebase uses
 it instead of Caddy: it writes `ship-<app>.conf` files, checks every change with `nginx -t` and
